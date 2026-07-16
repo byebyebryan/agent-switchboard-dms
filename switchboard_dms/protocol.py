@@ -58,6 +58,7 @@ _BINDING_CONFIDENCE = frozenset({"confirmed", "unknown"})
 _ERROR_SCOPES = frozenset(
     {"host", "project", "provider", "session", "launch", "surface"}
 )
+_PRESENTATION_PLAN_KINDS = frozenset({"focus", "switch", "attach", "blocked"})
 
 _SENSITIVE_KEY_PARTS = (
     "accesskey",
@@ -874,6 +875,91 @@ def _error_record(value: object, path: str) -> dict[str, Any]:
         result["sessionKey"] = session_key
     if table.get("details") is not None:
         result["details"] = _details(table["details"], f"{path}.details")
+    return result
+
+
+def parse_presentation_plan(raw: str | bytes | bytearray) -> dict[str, Any]:
+    """Validate and project one public PresentationPlan v1 envelope."""
+
+    table = _decode(raw)
+    schema = _integer(
+        _required(table, "schemaVersion", "envelope"), "envelope.schemaVersion"
+    )
+    protocol = _integer(
+        _required(table, "protocolVersion", "envelope"),
+        "envelope.protocolVersion",
+    )
+    if schema != SCHEMA_VERSION:
+        raise ProtocolError(
+            f"schema version {schema} is not supported; expected {SCHEMA_VERSION}"
+        )
+    if protocol != PROTOCOL_VERSION:
+        raise ProtocolError(
+            f"protocol version {protocol} is not supported; expected {PROTOCOL_VERSION}"
+        )
+    path = "envelope.plan"
+    source = _object(_required(table, "plan", "envelope"), path)
+    kind = _enum(
+        _required(source, "kind", path),
+        f"{path}.kind",
+        _PRESENTATION_PLAN_KINDS,
+    )
+    result: dict[str, Any] = {
+        "kind": kind,
+        "hostId": _uuid(_required(source, "hostId", path), f"{path}.hostId"),
+    }
+    if source.get("surfaceId") is not None:
+        result["surfaceId"] = _uuid(source["surfaceId"], f"{path}.surfaceId")
+    for key, maximum in (
+        ("workspaceId", 1024),
+        ("tmuxTarget", 2048),
+        ("tmuxClient", 1024),
+        ("desktopToken", 2048),
+    ):
+        if source.get(key) is not None:
+            result[key] = _string(source[key], f"{path}.{key}", maximum=maximum)
+    if source.get("leaseExpiresAt") is not None:
+        result["leaseExpiresAt"] = _integer(
+            source["leaseExpiresAt"], f"{path}.leaseExpiresAt"
+        )
+    if source.get("error") is not None:
+        result["error"] = _error_record(source["error"], f"{path}.error")
+
+    locator_fields = (
+        "surfaceId",
+        "workspaceId",
+        "tmuxTarget",
+        "tmuxClient",
+        "desktopToken",
+        "leaseExpiresAt",
+    )
+    if kind == "blocked":
+        if "error" not in result:
+            raise ProtocolError(f"{path} blocked plan requires error")
+        if any(field in result for field in locator_fields):
+            raise ProtocolError(f"{path} blocked plan contains surface locators")
+        return result
+    if "error" in result:
+        raise ProtocolError(f"{path} executable plan contains error")
+    if "surfaceId" not in result:
+        raise ProtocolError(f"{path} executable plan requires surfaceId")
+    if kind == "focus":
+        if "desktopToken" not in result:
+            raise ProtocolError(f"{path} focus plan requires desktopToken")
+        if any(
+            field in result for field in ("tmuxTarget", "tmuxClient", "leaseExpiresAt")
+        ):
+            raise ProtocolError(f"{path} focus plan contains non-applicable fields")
+    elif kind == "switch":
+        if "tmuxTarget" not in result or "tmuxClient" not in result:
+            raise ProtocolError(
+                f"{path} switch plan requires tmuxTarget and tmuxClient"
+            )
+    elif kind == "attach":
+        if "tmuxTarget" not in result:
+            raise ProtocolError(f"{path} attach plan requires tmuxTarget")
+        if "tmuxClient" in result:
+            raise ProtocolError(f"{path} attach plan contains non-applicable fields")
     return result
 
 

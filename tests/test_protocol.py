@@ -20,11 +20,13 @@ from switchboard_dms.protocol import (
     MAX_MODEL_WARNINGS,
     ProtocolError,
     SnapshotModel,
+    parse_presentation_plan,
     parse_snapshot,
 )
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "snapshot-v1.json"
+PLAN_FIXTURE = Path(__file__).parent / "fixtures" / "presentation-plan-v1.json"
 
 
 def fixture() -> dict[str, object]:
@@ -49,6 +51,55 @@ def cloned_session(number: int, *, recency: int) -> dict[str, object]:
     )
     value.pop("surfaceId", None)
     return value
+
+
+class PresentationPlanTests(unittest.TestCase):
+    def test_switch_fixture_is_validated_and_projected(self) -> None:
+        plan = parse_presentation_plan(PLAN_FIXTURE.read_bytes())
+
+        self.assertEqual(plan["kind"], "switch")
+        self.assertEqual(plan["surfaceId"], "33333333-3333-4333-8333-333333333333")
+        self.assertEqual(plan["tmuxClient"], "/dev/pts/7")
+        self.assertEqual(plan["leaseExpiresAt"], 1784142030000)
+
+    def test_blocked_plan_requires_only_a_structured_error(self) -> None:
+        value = {
+            "schemaVersion": 1,
+            "protocolVersion": 1,
+            "plan": {
+                "kind": "blocked",
+                "hostId": "11111111-1111-4111-8111-111111111111",
+                "error": {
+                    "code": "unmanaged_surface",
+                    "message": "The live session is not routable.",
+                    "scope": "session",
+                    "retryable": False,
+                    "observedAt": 1,
+                },
+            },
+        }
+
+        plan = parse_presentation_plan(encode(value))
+
+        self.assertEqual(plan["kind"], "blocked")
+        self.assertEqual(plan["error"]["code"], "unmanaged_surface")
+
+        value["plan"]["surfaceId"] = "33333333-3333-4333-8333-333333333333"
+        with self.assertRaisesRegex(ProtocolError, "surface locators"):
+            parse_presentation_plan(encode(value))
+
+    def test_executable_plan_shapes_are_strict(self) -> None:
+        value = json.loads(PLAN_FIXTURE.read_text(encoding="utf-8"))
+        value["plan"].pop("tmuxClient")
+        with self.assertRaisesRegex(
+            ProtocolError, "requires tmuxTarget and tmuxClient"
+        ):
+            parse_presentation_plan(encode(value))
+
+        value = json.loads(PLAN_FIXTURE.read_text(encoding="utf-8"))
+        value["plan"]["promptText"] = "must not cross the boundary"
+        with self.assertRaisesRegex(ProtocolError, "forbidden"):
+            parse_presentation_plan(encode(value))
 
 
 class SnapshotProjectionTests(unittest.TestCase):

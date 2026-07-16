@@ -6,11 +6,19 @@ import argparse
 import json
 import os
 import sys
+import unicodedata
 from dataclasses import dataclass
 from typing import Sequence
+from uuid import UUID
 
 from .process import ProcessRunError, run_process
-from .protocol import MAX_JSON_BYTES, MAX_MODEL_SESSIONS, ProtocolError, parse_snapshot
+from .protocol import (
+    MAX_JSON_BYTES,
+    MAX_MODEL_SESSIONS,
+    ProtocolError,
+    parse_presentation_plan,
+    parse_snapshot,
+)
 
 BRIDGE_VERSION = 1
 DEFAULT_TIMEOUT_MS = 10_000
@@ -45,6 +53,33 @@ def snapshot_argv(executable: str, *, refresh: bool) -> list[str]:
     return [executable, "snapshot", "--json"]
 
 
+def prepare_open_argv(
+    executable: str, *, session_key: str, request_id: str
+) -> list[str]:
+    return [
+        executable,
+        "prepare-open",
+        session_key,
+        "--request-id",
+        request_id,
+        "--can-focus-desktop",
+        "--can-launch-terminal",
+        "--json",
+    ]
+
+
+def select_surface_argv(
+    executable: str, *, surface_id: str, tmux_client: str
+) -> list[str]:
+    return [
+        executable,
+        "select-surface",
+        surface_id,
+        "--client",
+        tmux_client,
+    ]
+
+
 def _failure(error: BridgeError) -> dict[str, object]:
     return {
         "bridgeVersion": BRIDGE_VERSION,
@@ -58,6 +93,22 @@ def _success(model: object) -> dict[str, object]:
         "bridgeVersion": BRIDGE_VERSION,
         "ok": True,
         "model": model,
+    }
+
+
+def _plan_success(plan: dict[str, object]) -> dict[str, object]:
+    return {
+        "bridgeVersion": BRIDGE_VERSION,
+        "ok": True,
+        "plan": plan,
+    }
+
+
+def _action_success(surface_id: str) -> dict[str, object]:
+    return {
+        "bridgeVersion": BRIDGE_VERSION,
+        "ok": True,
+        "action": {"kind": "selected", "surfaceId": surface_id},
     }
 
 
@@ -106,8 +157,71 @@ def run_bridge(
     refresh: bool,
     timeout_ms: int,
     max_sessions: int,
+    prepare_open: str | None = None,
+    request_id: str | None = None,
+    select_surface: str | None = None,
+    tmux_client: str | None = None,
 ) -> dict[str, object]:
     try:
+        if prepare_open is not None:
+            assert request_id is not None
+            output = run_process(
+                prepare_open_argv(
+                    executable,
+                    session_key=prepare_open,
+                    request_id=request_id,
+                ),
+                timeout_ms=timeout_ms,
+            )
+            if output.exit_code != 0:
+                return _failure(
+                    BridgeError(
+                        "swbctl_nonzero_exit",
+                        f"swbctl exited with status {output.exit_code}.",
+                        True,
+                    )
+                )
+            payload = _snapshot_payload(output.stdout)
+            try:
+                plan = parse_presentation_plan(payload)
+            except ProtocolError:
+                return _failure(
+                    BridgeError(
+                        "plan_invalid_protocol",
+                        "swbctl stdout was not a compatible PresentationPlan v1 document.",
+                        False,
+                    )
+                )
+            return _plan_success(plan)
+
+        if select_surface is not None:
+            assert tmux_client is not None
+            output = run_process(
+                select_surface_argv(
+                    executable,
+                    surface_id=select_surface,
+                    tmux_client=tmux_client,
+                ),
+                timeout_ms=timeout_ms,
+            )
+            if output.exit_code != 0:
+                return _failure(
+                    BridgeError(
+                        "swbctl_nonzero_exit",
+                        f"swbctl exited with status {output.exit_code}.",
+                        True,
+                    )
+                )
+            if output.stdout:
+                return _failure(
+                    BridgeError(
+                        "action_unexpected_output",
+                        "swbctl returned unexpected action output.",
+                        False,
+                    )
+                )
+            return _action_success(select_surface)
+
         output = run_process(
             snapshot_argv(executable, refresh=refresh),
             timeout_ms=timeout_ms,
@@ -220,6 +334,37 @@ def _executable(value: str) -> str:
     return value
 
 
+def _uuid(value: str) -> str:
+    try:
+        parsed = UUID(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected a canonical non-nil UUID") from error
+    if parsed.int == 0 or str(parsed) != value:
+        raise argparse.ArgumentTypeError("expected a canonical non-nil UUID")
+    return value
+
+
+def _session_key(value: str) -> str:
+    parts = value.split(":")
+    if len(parts) != 3 or parts[1] != "codex":
+        raise argparse.ArgumentTypeError("expected a canonical Codex session key")
+    _uuid(parts[0])
+    _uuid(parts[2])
+    if len(value) > 512:
+        raise argparse.ArgumentTypeError("expected a canonical Codex session key")
+    return value
+
+
+def _tmux_client(value: str) -> str:
+    if (
+        not value
+        or len(value) > 1024
+        or any(unicodedata.category(character) == "Cc" for character in value)
+    ):
+        raise argparse.ArgumentTypeError("expected a bounded tmux client ID")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="switchboard-bridge",
@@ -227,6 +372,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--swbctl", default="swbctl", type=_executable)
     parser.add_argument("--refresh", action="store_true")
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--prepare-open", type=_session_key)
+    actions.add_argument("--select-surface", type=_uuid)
+    parser.add_argument("--request-id", type=_uuid)
+    parser.add_argument("--tmux-client", type=_tmux_client)
     parser.add_argument(
         "--timeout-ms",
         default=DEFAULT_TIMEOUT_MS,
@@ -265,13 +415,26 @@ def _silence_stdout() -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if (args.prepare_open is None) != (args.request_id is None):
+        parser.error("--prepare-open and --request-id must be supplied together")
+    if (args.select_surface is None) != (args.tmux_client is None):
+        parser.error("--select-surface and --tmux-client must be supplied together")
+    if (
+        args.prepare_open is not None or args.select_surface is not None
+    ) and args.refresh:
+        parser.error("--refresh applies only to snapshot reads")
     try:
         response = run_bridge(
             executable=args.swbctl,
             refresh=args.refresh,
             timeout_ms=args.timeout_ms,
             max_sessions=args.max_sessions,
+            prepare_open=args.prepare_open,
+            request_id=args.request_id,
+            select_surface=args.select_surface,
+            tmux_client=args.tmux_client,
         )
     except Exception:
         response = _internal_failure()

@@ -5,6 +5,7 @@ from .protocol import (
     MAX_MODEL_SESSIONS,
     ProtocolError,
     SnapshotModel,
+    parse_presentation_plan,
     parse_snapshot,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "MAX_MODEL_SESSIONS",
     "ProtocolError",
     "SnapshotModel",
+    "parse_presentation_plan",
     "parse_snapshot",
 ]

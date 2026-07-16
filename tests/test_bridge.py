@@ -14,6 +14,12 @@ from switchboard_dms.bridge import MAX_BRIDGE_BYTES, serialize_response
 ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / "switchboard-bridge"
 FIXTURE = ROOT / "tests" / "fixtures" / "snapshot-v1.json"
+PLAN_FIXTURE = ROOT / "tests" / "fixtures" / "presentation-plan-v1.json"
+SESSION_KEY = (
+    "11111111-1111-4111-8111-111111111111:codex:22222222-2222-4222-8222-222222222222"
+)
+REQUEST_ID = "44444444-4444-4444-8444-444444444444"
+SURFACE_ID = "33333333-3333-4333-8333-333333333333"
 
 
 class BridgeCliTests(unittest.TestCase):
@@ -127,6 +133,97 @@ class BridgeCliTests(unittest.TestCase):
             arguments.read_text(encoding="utf-8"),
             "snapshot\n--reconcile\nfull\n--json",
         )
+
+    def test_prepare_open_argv_and_plan_envelope_are_exact(self) -> None:
+        arguments = self.temp / "arguments"
+        executable = self.fixture_executable()
+
+        result = self.run_bridge(
+            executable,
+            "--prepare-open",
+            SESSION_KEY,
+            "--request-id",
+            REQUEST_ID,
+            environment={
+                "FAKE_ARGUMENTS": str(arguments),
+                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
+            },
+        )
+
+        payload = self.payload(result)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(set(payload), {"bridgeVersion", "ok", "plan"})
+        self.assertEqual(payload["plan"]["kind"], "switch")
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8"),
+            "\n".join(
+                (
+                    "prepare-open",
+                    SESSION_KEY,
+                    "--request-id",
+                    REQUEST_ID,
+                    "--can-focus-desktop",
+                    "--can-launch-terminal",
+                    "--json",
+                )
+            ),
+        )
+
+    def test_select_surface_argv_is_exact_and_output_free(self) -> None:
+        arguments = self.temp / "arguments"
+        executable = self.executable(
+            """
+            import os
+            from pathlib import Path
+            import sys
+            Path(os.environ["FAKE_ARGUMENTS"]).write_text(
+                "\\n".join(sys.argv[1:]), encoding="utf-8"
+            )
+            """
+        )
+
+        result = self.run_bridge(
+            executable,
+            "--select-surface",
+            SURFACE_ID,
+            "--tmux-client",
+            "/dev/pts/7",
+            environment={"FAKE_ARGUMENTS": str(arguments)},
+        )
+
+        payload = self.payload(result)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            payload["action"], {"kind": "selected", "surfaceId": SURFACE_ID}
+        )
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8"),
+            "\n".join(
+                (
+                    "select-surface",
+                    SURFACE_ID,
+                    "--client",
+                    "/dev/pts/7",
+                )
+            ),
+        )
+
+    def test_prepare_rejects_an_invalid_plan_without_exposing_it(self) -> None:
+        output = self.temp / "invalid-plan"
+        output.write_text('{"promptText":"private"}\n', encoding="utf-8")
+        executable = self.fixture_executable()
+
+        result = self.run_bridge(
+            executable,
+            "--prepare-open",
+            SESSION_KEY,
+            "--request-id",
+            REQUEST_ID,
+            environment={"FAKE_SNAPSHOT": str(output)},
+        )
+
+        payload = self.assert_error(result, "plan_invalid_protocol", retryable=False)
+        self.assertNotIn("private", json.dumps(payload))
 
     def test_fixture_success_has_the_exact_envelope(self) -> None:
         result = self.run_bridge(
@@ -544,7 +641,7 @@ class RuntimeBoundaryTests(unittest.TestCase):
                     self.assertNotIn(f"import {module}", text)
                     self.assertNotIn(f"from {module}", text)
 
-    def test_process_boundary_invokes_no_provider_or_desktop_tools(self) -> None:
+    def test_bridge_delegates_actions_without_provider_or_desktop_tools(self) -> None:
         text = "\n".join(
             (ROOT / relative).read_text(encoding="utf-8").casefold()
             for relative in (
@@ -555,7 +652,6 @@ class RuntimeBoundaryTests(unittest.TestCase):
         )
         for forbidden in (
             "registry.sqlite",
-            "tmux",
             "ssh",
             "niri",
             "ghostty",
