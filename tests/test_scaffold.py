@@ -1,8 +1,7 @@
 import hashlib
 import json
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "plugin.json"
@@ -57,7 +56,7 @@ class QmlScaffoldTests(unittest.TestCase):
     def test_launcher_surface_reads_cache_synchronously(self):
         self.assertRegex(self.launcher, r"property\s+var\s+pluginService\s*:\s*null")
         self.assertRegex(self.launcher, r'property\s+string\s+trigger\s*:\s*"sb:"')
-        self.assertRegex(self.launcher, r"signal\s+itemsChanged\s*\(\s*\)")
+        self.assertRegex(self.launcher, r"signal\s+itemsChanged(?:\s*\(\s*\))?")
         read_path = self.launcher.split("function getItems(query)", 1)[1].split(
             "function executeItem", 1
         )[0]
@@ -183,6 +182,36 @@ class DocumentationContractTests(unittest.TestCase):
         ):
             with self.subTest(non_goal=non_goal):
                 self.assertIn(non_goal, self.docs)
+
+    def test_live_integration_boundary_is_documented(self):
+        live = (ROOT / "docs" / "live-integration.md").read_text(encoding="utf-8")
+        for command in (
+            "dms ipc call plugin-scan scan",
+            "dms ipc call plugins enable switchboard",
+            "dms ipc call plugins reload switchboard",
+            "dms ipc call plugins disable switchboard",
+        ):
+            with self.subTest(command=command):
+                self.assertIn(command, live)
+        self.assertIn("no launcher-result query IPC", live)
+        self.assertIn("Quickshell 0.3.0", live)
+        self.assertIn("Qt 6.11.1", live)
+        self.assertIn("dms ipc call launcher openQuery 'sb:switchboard'", live)
+        self.assertIn("journalctl --user -u dms.service", live)
+        self.assertNotIn("dms logs", live)
+
+
+class DevelopmentWorkflowTests(unittest.TestCase):
+    def test_workflow_has_no_machine_specific_switchboard_path(self):
+        dev_script = (ROOT / "scripts" / "dev-plugin").read_text(encoding="utf-8")
+        live_script = (ROOT / "scripts" / "live-integration").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("/home/", dev_script)
+        self.assertNotIn("agent-switchboard/.venv", live_script)
+        self.assertIn("--swbctl", live_script)
+        self.assertIn("stat -c '%u'", dev_script)
+        self.assertIn("refusing to remove", dev_script)
 
 
 class FixtureContractTests(unittest.TestCase):

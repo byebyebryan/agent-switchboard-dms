@@ -91,10 +91,10 @@ The bounded model is connected to the DMS surfaces:
 Acceptance is satisfied by cached reads with no synchronous process execution,
 last-good retention, explicit degradation, honest unknown state, and refreshed
 cache results on reopen or query change under the verified DMS 1.5.0
-limitation. Live installation and an actual DMS runtime exercise remain Phase
-4 work.
+limitation. Live installation and an actual DMS runtime exercise were deferred
+to Phase 4.
 
-## Phase 4: development install and live DMS integration
+## Phase 4: development install and live DMS integration (complete)
 
 - Document a reversible development install and removal flow.
 - Exercise plugin discovery, enablement, reload, disablement, and removal with
@@ -108,6 +108,23 @@ limitation. Live installation and an actual DMS runtime exercise remain Phase
 Acceptance requires a clean install/reload cycle, no DMS load errors, a usable
 settings host, evidence for both success and degraded paths, and CI that makes
 only checks it actually performs.
+
+Acceptance was completed on DMS 1.5.0, Quickshell 0.3.0, and Qt 6.11.1. The
+reversible checkout symlink was discovered, enabled, reloaded, disabled, and
+removed through installed DMS paths without disturbing legacy plugins. Real
+shell process samples captured both `swbctl snapshot --json` and
+`swbctl snapshot --reconcile full --json` through the configured core
+virtual-environment executable. The installed-import component harness proved
+settings focus and height, query filtering, cache replacement, last-good
+retention, and both failure recovery paths. The sanitized reproducible runbook,
+versions, selected evidence, restoration boundary, and limitations are in
+[live-integration.md](live-integration.md).
+
+CI remains the dependency-free Python/JavaScript/static baseline. The live
+Quickshell harness requires an active display and an installed DMS tree, and
+there is no reproducible standalone headless `qmltestrunner` invocation for
+DMS's special `qs.*` config imports. No headless QML or live-shell CI coverage
+is claimed.
 
 ## Final audit and local handoff
 
