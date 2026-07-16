@@ -44,6 +44,7 @@ class ManifestContractTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertTrue((ROOT / self.manifest[key]).is_file())
         self.assertTrue((ROOT / "SwitchboardModel.js").is_file())
+        self.assertTrue((ROOT / "switchboard-open").is_file())
 
 
 class QmlScaffoldTests(unittest.TestCase):
@@ -68,19 +69,24 @@ class QmlScaffoldTests(unittest.TestCase):
         execute_path = self.launcher.split("function executeItem(item)", 1)[1].split(
             "function scheduleRun", 1
         )[0]
-        self.assertRegex(execute_path, r"\{\s*return\s*;\s*\}")
+        self.assertIn("actionProcess.command", execute_path)
+        self.assertIn("openerExecutable", execute_path)
+        self.assertIn('"--window-host"', execute_path)
+        self.assertIn("item._sessionKey", execute_path)
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
 
     def test_settings_use_verified_dms_components(self):
         self.assertIn("PluginSettings {", self.settings)
         self.assertIn('pluginId: "switchboard"', self.settings)
-        self.assertIn("DankTextField {", self.settings)
+        self.assertEqual(self.settings.count("DankTextField {"), 2)
         self.assertIn(
             "maximumLength: SwitchboardModel.MAX_EXECUTABLE_LENGTH", self.settings
         )
         self.assertEqual(self.settings.count("SliderSetting {"), 2)
         self.assertIn('loadValue("swbctl", "swbctl")', self.settings)
         self.assertIn('saveValue("swbctl", boundedValue)', self.settings)
+        self.assertIn('loadValue("terminal", "ghostty")', self.settings)
+        self.assertIn('saveValue("terminal", boundedValue)', self.settings)
         for key in ("timeout_ms", "refresh_seconds"):
             with self.subTest(key=key):
                 self.assertIn(f'settingKey: "{key}"', self.settings)
@@ -89,6 +95,8 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("Process {", self.launcher)
         self.assertIn("StdioCollector {", self.launcher)
         self.assertIn("refreshProcess.command = command", self.launcher)
+        self.assertIn("actionProcess.command", self.launcher)
+        self.assertIn("SwitchboardModel.parseActionResponse", self.launcher)
         self.assertIn('"--swbctl"', self.launcher)
         self.assertIn('"--timeout-ms"', self.launcher)
         self.assertIn('command.push("--refresh")', self.launcher)
@@ -114,13 +122,17 @@ class QmlScaffoldTests(unittest.TestCase):
             "sh -c",
             "/bin/sh",
             "/home/",
-            "tmux",
-            "ghostty",
             "ssh",
+            "niri msg",
+            "tmux attach",
+            "systemd-run",
         )
         for marker in forbidden:
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, qml)
+
+        self.assertIn('property string terminalExecutable: "ghostty"', self.launcher)
+        self.assertIn('Qt.resolvedUrl("switchboard-open")', self.launcher)
 
     def test_failure_retains_last_good_model(self):
         failure_path = self.launcher.split("function maybeFinishRun()", 1)[1]

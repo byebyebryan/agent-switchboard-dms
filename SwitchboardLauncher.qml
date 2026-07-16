@@ -9,9 +9,11 @@ Item {
 
     readonly property string pluginName: "switchboard"
     readonly property string bridgeExecutable: Paths.strip(Qt.resolvedUrl("switchboard-bridge"))
+    readonly property string openerExecutable: Paths.strip(Qt.resolvedUrl("switchboard-open"))
     property var pluginService: null
     property string trigger: "sb:"
     property string swbctlExecutable: "swbctl"
+    property string terminalExecutable: "ghostty"
     property int timeoutMs: 10000
     property int refreshSeconds: 15
     property var lastGoodModel: null
@@ -31,6 +33,13 @@ Item {
     property int settingsGeneration: 0
     property int runSettingsGeneration: -1
     property int runGeneration: 0
+    property bool actionActive: false
+    property bool actionExpired: false
+    property bool actionStdoutFinished: false
+    property bool actionStderrFinished: false
+    property bool actionExitFinished: false
+    property int actionExitCode: -1
+    property string actionStdout: ""
 
     signal itemsChanged
 
@@ -48,10 +57,13 @@ Item {
 
         const configuredExecutable = pluginService.loadPluginData(pluginName, "swbctl", "swbctl");
         const nextExecutable = SwitchboardModel.boundedExecutable(configuredExecutable);
+        const configuredTerminal = pluginService.loadPluginData(pluginName, "terminal", "ghostty");
+        const nextTerminal = SwitchboardModel.boundedExecutable(configuredTerminal, "ghostty");
         const nextTimeout = boundedInteger(pluginService.loadPluginData(pluginName, "timeout_ms", 10000), 100, 60000, 10000);
         const nextRefresh = boundedInteger(pluginService.loadPluginData(pluginName, "refresh_seconds", 15), 5, 300, 15);
-        const changed = nextExecutable !== swbctlExecutable || nextTimeout !== timeoutMs || nextRefresh !== refreshSeconds;
+        const changed = nextExecutable !== swbctlExecutable || nextTerminal !== terminalExecutable || nextTimeout !== timeoutMs || nextRefresh !== refreshSeconds;
         swbctlExecutable = nextExecutable;
+        terminalExecutable = nextTerminal;
         timeoutMs = nextTimeout;
         refreshSeconds = nextRefresh;
         if (changed)
@@ -84,7 +96,59 @@ Item {
     }
 
     function executeItem(item) {
-        return;
+        if (actionActive || !item || item._switchboardKind !== "session" || !item._sessionKey || !item._windowHost)
+            return;
+
+        actionActive = true;
+        actionExpired = false;
+        actionStdoutFinished = false;
+        actionStderrFinished = false;
+        actionExitFinished = false;
+        actionExitCode = -1;
+        actionStdout = "";
+        actionProcess.command = [openerExecutable, "--swbctl", swbctlExecutable, "--terminal", terminalExecutable, "--timeout-ms", String(timeoutMs), "--window-host", item._windowHost, item._sessionKey];
+        actionDeadline.interval = timeoutMs * 4 + 5000;
+        actionDeadline.restart();
+        actionProcess.running = true;
+        itemsChanged();
+    }
+
+    function scheduleStoppedActionCheck() {
+        Qt.callLater(() => {
+            Qt.callLater(root.finishStoppedActionIfNeeded);
+        });
+    }
+
+    function finishStoppedActionIfNeeded() {
+        if (!actionActive || actionProcess.running || actionExitFinished)
+            return;
+
+        actionExpired = true;
+        actionStdoutFinished = true;
+        actionStderrFinished = true;
+        actionExitFinished = true;
+        setFailure("action_start_failed", "The session opener process could not be started.", true);
+        maybeFinishAction();
+    }
+
+    function maybeFinishAction() {
+        if (!actionActive || !actionStdoutFinished || !actionStderrFinished || !actionExitFinished)
+            return;
+
+        actionDeadline.stop();
+        if (!actionExpired) {
+            const parsed = SwitchboardModel.parseActionResponse(actionStdout);
+            if (actionExitCode === 0 && parsed.ok) {
+                currentFailure = null;
+                scheduleRun(true);
+            } else if (!parsed.ok) {
+                setFailure(parsed.error.code, parsed.error.message, parsed.error.retryable);
+            } else {
+                setFailure("action_exit_mismatch", "The session opener exited unsuccessfully after returning a result.", true);
+            }
+        }
+        actionActive = false;
+        itemsChanged();
     }
 
     function scheduleRun(refresh) {
@@ -274,6 +338,21 @@ Item {
         }
     }
 
+    Timer {
+        id: actionDeadline
+
+        repeat: false
+        onTriggered: {
+            if (!root.actionActive)
+                return;
+
+            root.actionExpired = true;
+            root.setFailure("action_timeout", "The session opener did not finish before the launcher deadline.", true);
+            actionProcess.signal(15);
+            root.itemsChanged();
+        }
+    }
+
     Process {
         id: refreshProcess
 
@@ -300,6 +379,36 @@ Item {
             onStreamFinished: {
                 root.stderrFinished = true;
                 root.maybeFinishRun();
+            }
+        }
+    }
+
+    Process {
+        id: actionProcess
+
+        running: false
+        onRunningChanged: {
+            if (!running && root.actionActive)
+                root.scheduleStoppedActionCheck();
+        }
+        onExited: (exitCode, exitStatus) => {
+            root.actionExitCode = exitCode;
+            root.actionExitFinished = true;
+            root.maybeFinishAction();
+        }
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.actionStdout = text;
+                root.actionStdoutFinished = true;
+                root.maybeFinishAction();
+            }
+        }
+
+        stderr: StdioCollector {
+            onStreamFinished: {
+                root.actionStderrFinished = true;
+                root.maybeFinishAction();
             }
         }
     }

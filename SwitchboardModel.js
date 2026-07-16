@@ -1,11 +1,13 @@
 .pragma library
 
 var BRIDGE_VERSION = 1
+var ACTION_VERSION = 1
 var MODEL_VERSION = 1
 var MAX_EXECUTABLE_LENGTH = 4096
 
-function boundedExecutable(value) {
-    var text = String(value || "swbctl")
+function boundedExecutable(value, fallback) {
+    var defaultValue = String(fallback || "swbctl")
+    var text = String(value || defaultValue)
     return text.substring(0, MAX_EXECUTABLE_LENGTH)
 }
 
@@ -133,6 +135,27 @@ function parseBridgeResponse(text) {
     return { ok: true, model: envelope.model }
 }
 
+function parseActionResponse(text) {
+    var envelope
+    try {
+        envelope = JSON.parse(String(text))
+    } catch (error) {
+        return _failure("action_invalid_json", "The session opener returned an invalid response.", false)
+    }
+    if (!_object(envelope) || envelope.actionVersion !== ACTION_VERSION)
+        return _failure("action_incompatible", "The session opener response is incompatible.", false)
+    if (envelope.ok === false) {
+        if (!_object(envelope.error) || !_string(envelope.error.code) || !_string(envelope.error.message))
+            return _failure("action_invalid_error", "The session opener returned an invalid error.", false)
+        return _failure(envelope.error.code, envelope.error.message, envelope.error.retryable)
+    }
+    if (envelope.ok !== true || !_object(envelope.action))
+        return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
+    if (["focused", "switched", "launched"].indexOf(envelope.action.kind) === -1 || !_string(envelope.action.surfaceId))
+        return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
+    return { ok: true, action: envelope.action }
+}
+
 function _compareSessions(left, right) {
     if (left.recencyAt !== right.recencyAt)
         return right.recencyAt - left.recencyAt
@@ -223,7 +246,8 @@ function _sessionItem(session, host, now, index) {
         keywords: [session.sessionKey, session.providerSessionId],
         _preScored: 3000 - index,
         _switchboardKind: "session",
-        _sessionKey: session.sessionKey
+        _sessionKey: session.sessionKey,
+        _windowHost: host.displayName
     }
 }
 

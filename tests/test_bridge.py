@@ -8,7 +8,11 @@ import textwrap
 import time
 import unittest
 
-from switchboard_dms.bridge import MAX_BRIDGE_BYTES, serialize_response
+from switchboard_dms.bridge import (
+    MAX_BRIDGE_BYTES,
+    prepare_open_argv,
+    serialize_response,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -167,6 +171,26 @@ class BridgeCliTests(unittest.TestCase):
                     "--json",
                 )
             ),
+        )
+
+    def test_prepare_open_can_suppress_focus_without_suppressing_launch(self) -> None:
+        self.assertEqual(
+            prepare_open_argv(
+                "swbctl",
+                session_key=SESSION_KEY,
+                request_id=REQUEST_ID,
+                can_focus_desktop=False,
+                can_launch_terminal=True,
+            ),
+            [
+                "swbctl",
+                "prepare-open",
+                SESSION_KEY,
+                "--request-id",
+                REQUEST_ID,
+                "--can-launch-terminal",
+                "--json",
+            ],
         )
 
     def test_select_surface_argv_is_exact_and_output_free(self) -> None:

@@ -54,18 +54,26 @@ def snapshot_argv(executable: str, *, refresh: bool) -> list[str]:
 
 
 def prepare_open_argv(
-    executable: str, *, session_key: str, request_id: str
+    executable: str,
+    *,
+    session_key: str,
+    request_id: str,
+    can_focus_desktop: bool = True,
+    can_launch_terminal: bool = True,
 ) -> list[str]:
-    return [
+    argv = [
         executable,
         "prepare-open",
         session_key,
         "--request-id",
         request_id,
-        "--can-focus-desktop",
-        "--can-launch-terminal",
-        "--json",
     ]
+    if can_focus_desktop:
+        argv.append("--can-focus-desktop")
+    if can_launch_terminal:
+        argv.append("--can-launch-terminal")
+    argv.append("--json")
+    return argv
 
 
 def select_surface_argv(
@@ -159,6 +167,8 @@ def run_bridge(
     max_sessions: int,
     prepare_open: str | None = None,
     request_id: str | None = None,
+    prepare_can_focus_desktop: bool = True,
+    prepare_can_launch_terminal: bool = True,
     select_surface: str | None = None,
     tmux_client: str | None = None,
 ) -> dict[str, object]:
@@ -170,6 +180,8 @@ def run_bridge(
                     executable,
                     session_key=prepare_open,
                     request_id=request_id,
+                    can_focus_desktop=prepare_can_focus_desktop,
+                    can_launch_terminal=prepare_can_launch_terminal,
                 ),
                 timeout_ms=timeout_ms,
             )

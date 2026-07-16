@@ -125,6 +125,33 @@ function sessionItems(items) {
     )
     assert.strictEqual(first[0].id.startsWith("switchboard:session:"), true)
     assert.strictEqual(Object.prototype.hasOwnProperty.call(first[0], "action"), false)
+    assert.strictEqual(first[0]._windowHost, "snap")
+}
+
+{
+    const success = modelApi.parseActionResponse(JSON.stringify({
+        actionVersion: 1,
+        ok: true,
+        action: { kind: "focused", surfaceId: "33333333-3333-4333-8333-333333333333" }
+    }))
+    const failure = modelApi.parseActionResponse(JSON.stringify({
+        actionVersion: 1,
+        ok: false,
+        error: { code: "unmanaged_surface", message: "Cannot focus this runtime.", retryable: false }
+    }))
+    assert.strictEqual(success.ok, true)
+    assert.strictEqual(success.action.kind, "focused")
+    assert.strictEqual(failure.ok, false)
+    assert.strictEqual(failure.error.code, "unmanaged_surface")
+}
+
+for (const badAction of [
+    "not json",
+    JSON.stringify({ actionVersion: 2, ok: true, action: {} }),
+    JSON.stringify({ actionVersion: 1, ok: true, action: { kind: "unknown", surfaceId: "surface" } }),
+    JSON.stringify({ actionVersion: 1, ok: false, error: {} })
+]) {
+    assert.strictEqual(modelApi.parseActionResponse(badAction).ok, false)
 }
 
 for (const query of [
@@ -269,6 +296,7 @@ for (const query of [
     assert.strictEqual(modelApi.boundedExecutable("x".repeat(5000)).length, 4096)
     assert.strictEqual(modelApi.boundedExecutable("/path with spaces"), "/path with spaces")
     assert.strictEqual(modelApi.boundedExecutable(""), "swbctl")
+    assert.strictEqual(modelApi.boundedExecutable("", "ghostty"), "ghostty")
 }
 
 {
@@ -358,4 +386,4 @@ for (const badEnvelope of [
     assert.strictEqual(modelApi.parseBridgeResponse(badEnvelope).ok, false)
 }
 
-console.log("SwitchboardModel.js: 16 deterministic behavior groups passed")
+console.log("SwitchboardModel.js: 18 deterministic behavior groups passed")

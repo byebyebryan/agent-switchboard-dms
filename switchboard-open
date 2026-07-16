@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+
+import sys
+from importlib import import_module
+from pathlib import Path
+
+
+repo_root = str(Path(__file__).resolve().parent)
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+
+def desktop_main() -> int:
+    return import_module("switchboard_dms.desktop").main()
+
+
+if __name__ == "__main__":
+    raise SystemExit(desktop_main())
