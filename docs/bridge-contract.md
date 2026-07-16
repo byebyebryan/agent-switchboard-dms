@@ -97,8 +97,10 @@ code.
 - No shell, `shlex`, private database, provider command, tmux, SSH, niri, or
   Ghostty integration exists in this boundary.
 
-These limits make the bridge suitable for a later asynchronous QML process
-adapter. The current QML launcher remains inert and does not invoke it yet.
+These limits are consumed by the asynchronous QML process adapter. The launcher
+passes the configured executable and timeout as separate argv elements,
+requests `--refresh` only for full reconciliation, and replaces its cache only
+after a complete exit-zero success envelope passes frontend model validation.
 
 ## Reviewed contract provenance
 

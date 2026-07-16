@@ -68,27 +68,31 @@ Acceptance is satisfied by the fully tested bridge/model boundary with no QML
 launcher behavior change, internal Agent Switchboard imports, or direct private
 database reads. The exact contract is recorded in `docs/bridge-contract.md`.
 
-## Phase 3: launcher, settings, cache, and degradation
+## Phase 3: launcher, settings, cache, and degradation (complete)
 
-Connect the bounded model to the DMS surfaces:
+The bounded model is connected to the DMS surfaces:
 
-- Add executable and refresh settings without inventing provider, transport,
-  project-action, or remote-host configuration.
-- Keep `getItems(query)` synchronous by filtering an in-memory cache.
-- Start or coalesce asynchronous refreshes outside the synchronous read path.
-- Replace cache state only after complete validation and retain the last-good
-  snapshot after command, parse, or validation failures.
-- Present honest unknown states: missing or stale observations do not prove
-  offline, dead, or idle. Treat an empty capabilities list as neutral on
-  retained reads.
-- Add deterministic search and launcher projection tests for current, stale,
-  degraded, empty, and forward-compatible snapshots.
-- Leave execution unavailable until a separate public, versioned action
-  contract exists; `executeItem(item)` remains a safe no-op.
+- DMS `PluginSettings` persists one executable token plus bounded timeout and
+  refresh controls; no provider, transport, project-action, or remote-host
+  configuration was added.
+- `getItems(query)` synchronously filters the in-memory last-good model and uses
+  `Qt.callLater` to schedule retained or full-refresh work outside the read.
+- One persistent `Process` coalesces runs. Only a complete exit-zero bridge
+  success with a validated model replaces the cache; failures remain explicit
+  while last-good rows stay visible.
+- Neutral, stale, and source-authored state remain honest. Missing observations
+  do not create liveness or activity claims.
+- Pure JavaScript tests cover deterministic order, stable IDs, each required
+  search surface, current, stale, loading, degraded, neutral, empty,
+  retained-error, and forward-compatible models. Static tests lock the
+  asynchronous QML boundary.
+- `executeItem(item)` remains a safe no-op.
 
-Acceptance requires cached reads with no synchronous process execution,
-last-good retention, explicit degradation, honest unknown state, and results
-that refresh on reopen or query change under the verified DMS limitation.
+Acceptance is satisfied by cached reads with no synchronous process execution,
+last-good retention, explicit degradation, honest unknown state, and refreshed
+cache results on reopen or query change under the verified DMS 1.5.0
+limitation. Live installation and an actual DMS runtime exercise remain Phase
+4 work.
 
 ## Phase 4: development install and live DMS integration
 
