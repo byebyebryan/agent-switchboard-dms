@@ -1,0 +1,21 @@
+{
+  "$schema": "https://danklinux.com/schemas/plugin.json",
+  "id": "switchboard",
+  "name": "Switchboard",
+  "description": "Agent Switchboard launcher integration for DMS.",
+  "version": "0.1.0",
+  "author": "Bryan Bai",
+  "type": "launcher",
+  "capabilities": [
+    "launcher"
+  ],
+  "component": "./SwitchboardLauncher.qml",
+  "settings": "./SwitchboardSettings.qml",
+  "trigger": "sb:",
+  "requires_dms": ">=1.5.0",
+  "permissions": [
+    "settings_read",
+    "settings_write",
+    "process"
+  ]
+}
