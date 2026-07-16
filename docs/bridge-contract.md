@@ -1,11 +1,16 @@
 # Bridge contract
 
-`switchboard-bridge` is the dependency-free subprocess boundary between DMS
-and Agent Switchboard. It invokes only the public `swbctl snapshot` command,
-validates Snapshot v1, and emits a smaller frontend-owned model. The bridge
-itself does not directly read Switchboard storage or invoke providers,
-transports, terminals, or the compositor. `--refresh` intentionally asks
-`swbctl` to perform full reconciliation behind that public boundary.
+`switchboard-bridge` is the subprocess boundary between DMS and Agent
+Switchboard. Its Python implementation uses only the Python standard library;
+"dependency-free" means no third-party Python packages, not no runtime
+dependencies. The Python, Agent Switchboard/`swbctl`, DMS, and DMS-supplied
+Quickshell prerequisites are listed in the README.
+
+The bridge invokes only the public `swbctl snapshot` command, validates
+Snapshot v1, and emits a smaller frontend-owned model. It does not directly
+read Switchboard storage or invoke providers, transports, terminals, or the
+compositor. `--refresh` intentionally asks `swbctl` to perform full
+reconciliation behind that public boundary.
 
 ## Invocation
 

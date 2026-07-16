@@ -34,6 +34,22 @@ DMS 1.5.0 does not consume launcher `itemsChanged()`. Background completion
 therefore does not mutate an already rendered result list; the refreshed cache
 appears when the launcher is reopened or its query changes.
 
+## Runtime prerequisites
+
+- Python 3.12 or newer. Agent Switchboard 0.1.0 declares this minimum Python
+  version, and the bridge runs under Python as well.
+- Agent Switchboard 0.1.0's `swbctl`, either installed on `PATH` as `swbctl` or
+  configured in the plugin's `swbctl` setting as one executable token (a bare
+  executable name or path). The setting is not a shell command and cannot
+  include arguments.
+- DMS 1.5.0 or newer, including the Quickshell runtime supplied by DMS.
+
+Calling `switchboard-bridge` dependency-free means that its Python
+implementation uses the Python standard library and no third-party Python
+packages. It does not mean the integration has no runtime dependencies: the
+Python, Agent Switchboard/`swbctl`, DMS, and DMS-supplied Quickshell
+prerequisites above still apply.
+
 Run a retained read with normal executable lookup:
 
 ```sh
@@ -55,7 +71,7 @@ limit, output, and error contract.
 
 ## Development
 
-Run the dependency-free baseline checks with:
+Run the baseline checks with:
 
 ```sh
 ./scripts/check

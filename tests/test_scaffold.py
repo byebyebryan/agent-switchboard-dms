@@ -134,10 +134,36 @@ class QmlScaffoldTests(unittest.TestCase):
 class DocumentationContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        cls.bridge_contract = (ROOT / "docs" / "bridge-contract.md").read_text(
+            encoding="utf-8"
+        )
+        cls.normalized_readme = " ".join(cls.readme.split())
+        cls.normalized_bridge_contract = " ".join(cls.bridge_contract.split())
         cls.docs = "\n".join(
             (ROOT / relative).read_text(encoding="utf-8")
             for relative in ("docs/architecture.md", "docs/implementation-plan.md")
         )
+
+    def test_runtime_prerequisites_are_truthfully_documented(self):
+        for phrase in (
+            "Python 3.12 or newer",
+            "Agent Switchboard 0.1.0",
+            "one executable token",
+            "not a shell command",
+            "DMS 1.5.0 or newer",
+            "Quickshell runtime supplied by DMS",
+            "no third-party Python packages",
+            "does not mean the integration has no runtime dependencies",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.normalized_readme)
+
+        self.assertIn(
+            "uses only the Python standard library",
+            self.normalized_bridge_contract,
+        )
+        self.assertIn("not no runtime dependencies", self.normalized_bridge_contract)
 
     def test_public_command_boundary_is_documented(self):
         commands = (
