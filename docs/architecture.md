@@ -14,6 +14,9 @@ The only accepted CLI commands are:
 - `swbctl snapshot --reconcile full --json`
 - `swbctl list --json`
 - `swbctl list --refresh --json`
+- `swbctl prepare-open <session-key> --request-id <uuid> --json`
+- `swbctl select-surface <surface-id> --client <tmux-client-id>`
+- `swbctl attach-surface <surface-id>`
 
 The implemented bridge deliberately chooses the two snapshot forms from that
 public set: retained reads use `swbctl snapshot --json`, and refreshes use
@@ -21,17 +24,19 @@ public set: retained reads use `swbctl snapshot --json`, and refreshes use
 Switchboard modules, query internal databases, or depend on private storage
 layouts, and it does not invoke provider commands itself. The refresh form
 intentionally asks `swbctl` to reconcile providers behind that public boundary.
-Snapshot v1 JSON is the only interchange format at this boundary.
-Unknown fields in that envelope are ignored for forward compatibility.
+Snapshot v1 and PresentationPlan v1 JSON are the only interchange formats at
+this boundary. Unknown safe snapshot fields are ignored for forward
+compatibility; presentation plan shapes are independently validated before any
+desktop action.
 
 ## Process bridge
 
 The repository-owned `switchboard-bridge` executable is the only process
-adapter intended for QML. It accepts one configured executable token, builds a
-fixed argv array, and never invokes a shell. Its process layer drains stdout and
-stderr concurrently under strict byte and time limits. Every abnormal process
-or cleanup exit kills the isolated child process group and reaps its direct
-child.
+adapter used for reads and direct core actions. It accepts one configured
+executable token, builds fixed argv arrays, and never invokes a shell. Its
+process layer drains stdout and stderr concurrently under strict byte and time
+limits. Every abnormal process or cleanup exit kills the isolated child process
+group and reaps its direct child.
 
 The settings and launcher both bound that opaque executable token to 4096
 JavaScript UTF-16 code units. No path syntax or shell syntax is interpreted.
@@ -44,6 +49,26 @@ errors. Managed runs emit one deterministic JSON object on writable stdout and
 nothing on stderr. A broken stdout exits as a silent managed failure. The full
 versioned contract is in
 [bridge-contract.md](bridge-contract.md).
+
+The repository-owned `switchboard-open` executable is the QML session-action
+adapter. It generates one request UUID, asks the same validated bridge layer for
+a plan, and performs only the advertised operation:
+
+1. `focus` matches a niri window by a SHA-256-derived Wayland application ID.
+   An adopted pre-Switchboard pane can instead match the exact tmux workspace
+   title prefix plus the short host suffix.
+2. `switch` calls `swbctl select-surface` through the bridge, then focuses that
+   window.
+3. `attach` launches the configured Ghostty executable through
+   `systemd-run --user --scope --collect --quiet --` and runs only
+   `swbctl attach-surface <surface-id>` inside it.
+4. `blocked` returns the core-authored structured error and starts nothing.
+
+If focus fails, the helper prepares again with the same request ID and
+`can_focus_desktop=false`. Only an attach plan is accepted as fallback. The
+desktop token is never used as an application ID directly; its SHA-256 digest
+produces an opaque valid class. DMS owns niri and Ghostty behavior, while core
+owns the tmux locator, provider command, lease, and duplicate-runtime check.
 
 ## Launcher data flow
 
@@ -70,7 +95,7 @@ starts or waits for a process in the synchronous read path. The persistent QML
    failures and expose the current structured failure alongside retained rows.
 
 The settings surface uses DMS 1.5.0's `PluginSettings`, `DankTextField`, and
-`SliderSetting` components. It persists `swbctl`, `timeout_ms`, and
+`SliderSetting` components. It persists `swbctl`, `terminal`, `timeout_ms`, and
 `refresh_seconds` through the exact `loadPluginData(pluginId, key,
 defaultValue)` and `savePluginData(pluginId, key, value)` service methods. The
 manifest's `settings_read`, `settings_write`, and `process` permissions are the
@@ -81,7 +106,9 @@ unknown; the UI does not infer liveness or activity. The bridge turns an empty
 `capabilities` array into a neutral Codex capability, which the launcher renders
 as unknown rather than unavailable. Session rows display source-authored
 activity, runtime presence, resumability, and attachment values. Selection is
-unavailable until an explicit, safe action contract is designed and tested.
+available only for session items and always runs asynchronously through the
+validated action helper. Structured action failures become the current failure
+item; a success schedules a full snapshot refresh.
 
 The bridge remains the authoritative full Snapshot and projected-model
 validator. The pure `SwitchboardModel.js` consumer additionally validates the
@@ -104,12 +131,13 @@ This repository does not currently provide:
 - Claude support
 - SSH support or remote-host orchestration
 - provider hooks or liveness inference
-- project actions
-- tmux session creation
-- niri integration
-- Ghostty integration
+- project or new-session actions
+- direct tmux locator construction or provider launch logic
+- non-niri compositors or non-Ghostty terminal adapters
 - a chezmoi cutover or configuration migration
 - a rich widget
 
 It also does not recreate provider, tmux, SSH, compositor, terminal, or config
-management logic inside QML.
+management logic inside QML. The separate legacy `agentSessions` plugin remains
+available for Claude and remote behavior; this integration neither disables
+nor modifies it.

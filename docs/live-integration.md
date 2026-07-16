@@ -158,6 +158,37 @@ Rapid back-to-back reloads did produce unrelated Qt invalid-context warnings;
 the evidence claims no Switchboard component/load errors, not a globally silent
 shell log.
 
+## Phase 3A local action evidence
+
+The 2026-07-16 action exercise used the installed development symlink and the
+public core commands without restarting DMS or tmux:
+
+1. Core full reconciliation identified the current Codex runtime as live and
+   attached to the current tmux pane, with no managed surface yet.
+2. `switchboard-open` prepared that canonical session key. Core atomically
+   adopted the pane; the helper matched its pre-Switchboard title using the
+   exact tmux workspace prefix and short host suffix, then focused the existing
+   Ghostty window.
+3. niri contained seven windows before and after. No new Ghostty window or
+   provider runtime was created, and the tmux server PID was unchanged.
+4. `dms ipc call plugins reload switchboard` and
+   `dms ipc call launcher openQuery 'sb:switchboard'` both succeeded. The DMS
+   service PID and tmux server PID remained unchanged. The separate legacy
+   `agentSessions` plugin path remained present and untouched.
+
+Codex hook installation also completed through
+`swbctl hooks install --provider codex`. `swbctl doctor` reached Codex 0.144.4
+and found only the five expected `hook_untrusted` diagnostics. Trust cannot be
+written by Switchboard: review the Agent Switchboard definitions with `/hooks`
+inside Codex, trust `SessionStart`, `UserPromptSubmit`, `PermissionRequest`,
+`PostToolUse`, and `Stop`, then rerun `swbctl doctor`.
+
+Until that explicit trust step produces a healthy doctor result, this evidence
+claims the live adoption/focus and DMS reload paths, but not live hook coverage
+or parked-session end-to-end startup. Deterministic tests cover the waiting
+surface, lease, same-request focus fallback, attach argv, and final
+duplicate-runtime check without starting a second live Codex TUI.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

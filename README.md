@@ -1,11 +1,12 @@
 # Switchboard for DMS
 
-Switchboard is a DankMaterialShell (DMS) launcher integration for browsing
-local Codex sessions from Agent Switchboard snapshots. The QML launcher returns
-filtered rows from an in-memory last-good cache while a persistent DMS
-`Process` runs the repository-owned bridge asynchronously. Session selection
-remains intentionally unavailable; `executeItem(item)` is a safe no-op until a
-separate public action contract exists.
+Switchboard is a DankMaterialShell (DMS) launcher integration for browsing and
+opening existing local Codex sessions from Agent Switchboard. The QML launcher
+returns filtered rows from an in-memory last-good cache while persistent DMS
+`Process` instances run repository-owned snapshot and action helpers
+asynchronously. Selecting a session consumes a validated PresentationPlan v1,
+focuses its existing niri window, or opens Ghostty onto its core-owned tmux
+surface.
 
 The integration boundary is deliberately narrow. `switchboard-bridge` runs a
 user-configured `swbctl` executable without a shell and consumes Snapshot v1
@@ -13,12 +14,16 @@ JSON through the public commands documented in
 [docs/architecture.md](docs/architecture.md). It does not import Agent
 Switchboard internals, read its database directly, or invoke provider commands
 itself. `--refresh` intentionally asks the public `swbctl` boundary to perform
-full reconciliation before returning the snapshot.
+full reconciliation before returning the snapshot. `switchboard-open`
+coordinates only validated prepare/select results and delegates final tmux
+attachment back to `swbctl attach-surface` inside Ghostty.
 
 Plugin settings expose only the integration controls needed by this phase:
 
 - `swbctl` executable token, defaulting to normal lookup of `swbctl` and
   limited to 4096 JavaScript UTF-16 code units
+- terminal executable token, defaulting to `ghostty` and subject to the same
+  one-token bound
 - snapshot timeout from 100 through 60000 milliseconds, defaulting to 10000
 - refresh interval from 5 through 300 seconds, defaulting to 15
 
@@ -43,12 +48,14 @@ appears when the launcher is reopened or its query changes.
   executable name or path). The setting is not a shell command and cannot
   include arguments.
 - DMS 1.5.0 or newer, including the Quickshell runtime supplied by DMS.
+- niri, Ghostty, and a systemd user manager for desktop action execution.
 
 Calling `switchboard-bridge` dependency-free means that its Python
 implementation uses the Python standard library and no third-party Python
 packages. It does not mean the integration has no runtime dependencies: the
 Python, Agent Switchboard/`swbctl`, DMS, and DMS-supplied Quickshell
-prerequisites above still apply.
+prerequisites above still apply. The session-opening helper additionally needs
+niri, Ghostty, and `systemd-run`.
 
 Run a retained read with normal executable lookup:
 
@@ -61,6 +68,16 @@ Request a full refresh with:
 ```sh
 ./switchboard-bridge --refresh
 ```
+
+Open one canonical local Codex session key with:
+
+```sh
+./switchboard-open --window-host HOST-DISPLAY-NAME HOST-ID:codex:SESSION-UUID
+```
+
+The helper generates one request ID. If focus fails, it reuses that ID while
+requesting an attach plan, so retries cannot reserve or start another Codex
+runtime.
 
 Managed bridge runs keep stderr empty and, while stdout remains writable, emit
 exactly one JSON object. They use exit `0` for valid models or exit `1` for
@@ -79,8 +96,9 @@ Run the baseline checks with:
 
 The checks validate the plugin manifest, static QML cache/process surface,
 deterministic JavaScript projection and search behavior, architecture and
-bridge contracts, bounded process behavior, Snapshot projection, and the pinned
-synthetic protocol fixture. QML runtime tests are intentionally not claimed
+bridge contracts, bounded process behavior, Snapshot and PresentationPlan
+projection, niri matching, fixed Ghostty argv, same-request fallback, and the
+pinned synthetic protocol fixture. QML runtime tests are intentionally not claimed
 in CI because the live harness needs installed DMS imports and an active
 display.
 

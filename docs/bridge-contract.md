@@ -6,17 +6,24 @@ Switchboard. Its Python implementation uses only the Python standard library;
 dependencies. The Python, Agent Switchboard/`swbctl`, DMS, and DMS-supplied
 Quickshell prerequisites are listed in the README.
 
-The bridge invokes only the public `swbctl snapshot` command, validates
-Snapshot v1, and emits a smaller frontend-owned model. It does not directly
-read Switchboard storage or invoke providers, transports, terminals, or the
-compositor. `--refresh` intentionally asks `swbctl` to perform full
-reconciliation behind that public boundary.
+The bridge invokes only public `swbctl` commands. Snapshot reads validate
+Snapshot v1 and emit a smaller frontend-owned model. Action modes validate
+PresentationPlan v1 or delegate one exact surface selection. It does not
+directly read Switchboard storage or invoke providers, terminals, or the
+compositor. `--refresh` and `prepare-open` intentionally ask `swbctl` to perform
+full reconciliation behind that public boundary.
 
 ## Invocation
 
 ```sh
 ./switchboard-bridge [--swbctl EXECUTABLE] [--refresh]
     [--timeout-ms MILLISECONDS] [--max-sessions COUNT]
+./switchboard-bridge [--swbctl EXECUTABLE]
+    --prepare-open SESSION-KEY --request-id UUID
+    [--timeout-ms MILLISECONDS]
+./switchboard-bridge [--swbctl EXECUTABLE]
+    --select-surface SURFACE-ID --tmux-client CLIENT-ID
+    [--timeout-ms MILLISECONDS]
 ```
 
 - `--swbctl` defaults to the single executable token `swbctl`. The value is
@@ -26,6 +33,13 @@ reconciliation behind that public boundary.
   "--json"]`.
 - `--timeout-ms` defaults to `10000` and accepts `100` through `60000`.
 - `--max-sessions` defaults to `1000` and accepts `1` through `1000`.
+- `--prepare-open` and `--select-surface` are mutually exclusive with one
+  another and with `--refresh`.
+- Preparation uses exactly `[EXECUTABLE, "prepare-open", SESSION_KEY,
+  "--request-id", UUID, "--can-focus-desktop", "--can-launch-terminal",
+  "--json"]`.
+- Selection uses exactly `[EXECUTABLE, "select-surface", SURFACE_ID,
+  "--client", CLIENT_ID]` and requires empty stdout on success.
 
 The root entry point resolves its real path so it can be launched through a
 development symlink, but it must remain co-located with the `switchboard_dms`
@@ -51,6 +65,18 @@ in `switchboard_dms.protocol`. Provider degradation is data: a valid degraded
 or neutral snapshot remains `ok: true`, with capability state and warnings in
 the model.
 
+A prepared action returns the independently validated public plan:
+
+```json
+{"bridgeVersion":1,"ok":true,"plan":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"focus","surfaceId":"33333333-3333-4333-8333-333333333333","desktopToken":"opaque"}}
+```
+
+A successful selection returns only the selected stable surface ID:
+
+```json
+{"action":{"kind":"selected","surfaceId":"33333333-3333-4333-8333-333333333333"},"bridgeVersion":1,"ok":true}
+```
+
 ## Failure
 
 Managed failure exits `1`:
@@ -73,6 +99,8 @@ The stable error codes are:
 | `snapshot_invalid_utf8` | no | Snapshot stdout was not UTF-8. |
 | `snapshot_invalid_json` | no | Snapshot stdout was not one valid JSON document. |
 | `snapshot_invalid_protocol` | no | JSON was not a compatible Snapshot v1 envelope. |
+| `plan_invalid_protocol` | no | JSON was not a compatible PresentationPlan v1 envelope. |
+| `action_unexpected_output` | no | A successful selection wrote unexpected stdout. |
 | `bridge_serialization_failed` | no | The bridge model could not be serialized. |
 | `bridge_output_overflow` | no | The final bridge response exceeded its limit. |
 | `bridge_internal_error` | no | An otherwise unmanaged bridge error occurred. |
@@ -99,13 +127,25 @@ code.
 - `swbctl` starts in a new process group. Every abnormal execution or cleanup
   exit kills the group and reaps the direct child, including cleanup faults
   discovered after the child itself exited normally.
-- No shell, `shlex`, private database, provider command, tmux, SSH, niri, or
-  Ghostty integration exists in this boundary.
+- No shell, `shlex`, private database, provider command, SSH, niri, or Ghostty
+  integration exists in this boundary. tmux selection remains behind the
+  revalidating public `swbctl select-surface` command.
 
 These limits are consumed by the asynchronous QML process adapter. The launcher
 passes the configured executable and timeout as separate argv elements,
 requests `--refresh` only for full reconciliation, and replaces its cache only
 after a complete exit-zero success envelope passes frontend model validation.
+
+## Desktop action envelope
+
+`switchboard-open` emits a separate `actionVersion: 1` envelope. Success kinds
+are `focused`, `switched`, or `launched`, each with one stable surface ID.
+Failure uses the same bounded `{code,message,retryable}` display shape. The
+helper's stdout is one compact newline-terminated JSON object no larger than 16
+KiB; stderr is ignored by QML. It accepts one `--swbctl` token, one `--terminal`
+token, a bounded `--window-host`, the shared timeout, and one canonical session
+key. It never accepts raw tmux locators, provider argv, desktop tokens, or niri
+window IDs from QML.
 
 ## Reviewed contract provenance
 

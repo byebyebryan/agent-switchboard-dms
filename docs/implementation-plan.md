@@ -126,6 +126,33 @@ there is no reproducible standalone headless `qmltestrunner` invocation for
 DMS's special `qs.*` config imports. No headless QML or live-shell CI coverage
 is claimed.
 
+## Phase 5: existing local Codex actions (complete)
+
+This phase implements the DMS portion of Agent Switchboard Phase 3A:
+
+- The bridge independently validates PresentationPlan v1 and exposes exact
+  fixed-argv prepare/select modes.
+- Session items retain only the canonical session key and source host display
+  name needed by the asynchronous action process.
+- `switchboard-open` generates one request ID, executes focus/switch/attach
+  plans, and returns one bounded `actionVersion: 1` result.
+- Managed Ghostty application IDs are SHA-256 derivations of opaque desktop
+  tokens. Adopted panes retain exact tmux-title-plus-host fallback matching.
+- A failed niri focus reprepares with the same request ID and
+  `can_focus_desktop=false`; only a core-authored attach plan is accepted.
+- Ghostty is detached from the DMS service cgroup through a collected user
+  systemd scope and runs only `swbctl attach-surface <surface-id>`.
+- QML remains shell-free, reports structured action failures, prevents
+  concurrent selections, and schedules a full refresh after success.
+
+Acceptance completed with 109 Python tests and 18 JavaScript behavior groups,
+QML formatting, Ruff, package Pyright, and diff checks. Live adoption focused
+an existing Ghostty window without changing niri window count or the tmux
+server PID. A DMS plugin reload and `sb:` query kept both DMS and tmux service
+identities stable and did not modify the separate legacy `agentSessions`
+plugin. The remaining user-owned Codex `/hooks` trust gate is recorded in
+[live-integration.md](live-integration.md).
+
 ## Final audit and local handoff
 
 - Re-run all unit, JSON, shell, QML, fixture, and whitespace checks.
@@ -133,5 +160,7 @@ is claimed.
 - Make small local commits with clear messages only after review.
 - Do not push; leave remote publication to an explicit later instruction.
 
-Claude, SSH, hooks/liveness, project actions, tmux creation, niri, Ghostty,
-chezmoi cutover, and a rich widget remain non-goals throughout this plan.
+Claude, SSH, provider hooks/liveness, project/new-session actions, direct tmux
+locator or provider-launch logic, non-niri/non-Ghostty adapters, chezmoi
+cutover, and a rich widget remain non-goals. The legacy plugin remains the
+Claude and remote fallback.

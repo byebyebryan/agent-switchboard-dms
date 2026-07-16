@@ -183,11 +183,15 @@ class DocumentationContractTests(unittest.TestCase):
             "swbctl snapshot --reconcile full --json",
             "swbctl list --json",
             "swbctl list --refresh --json",
+            "swbctl prepare-open <session-key> --request-id <uuid> --json",
+            "swbctl select-surface <surface-id> --client <tmux-client-id>",
+            "swbctl attach-surface <surface-id>",
         )
         for command in commands:
             with self.subTest(command=command):
                 self.assertIn(command, self.docs)
         self.assertIn("Snapshot v1 JSON", self.docs)
+        self.assertIn("PresentationPlan v1 JSON", self.docs)
         self.assertIn("user-configured `swbctl`", self.docs)
         self.assertIn("must not import internal Agent Switchboard", self.docs)
         self.assertIn("read its database", self.docs)
@@ -198,7 +202,7 @@ class DocumentationContractTests(unittest.TestCase):
             "last-good snapshot",
             "Missing observations and stale data",
             "neutral Codex capability",
-            "Selection remains unavailable",
+            "available only for session items",
             "does not connect that signal",
             "reopened or the query changes",
             "`Process.signal(15)`",
@@ -210,11 +214,10 @@ class DocumentationContractTests(unittest.TestCase):
         for non_goal in (
             "Claude",
             "SSH",
-            "hooks/liveness",
-            "project actions",
-            "tmux creation",
-            "niri",
-            "Ghostty",
+            "provider hooks/liveness",
+            "project/new-session actions",
+            "direct tmux locator",
+            "non-niri/non-Ghostty adapters",
             "chezmoi cutover",
             "rich widget",
         ):
@@ -236,6 +239,10 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("Qt 6.11.1", live)
         self.assertIn("dms ipc call launcher openQuery 'sb:switchboard'", live)
         self.assertIn("journalctl --user -u dms.service", live)
+        self.assertIn("Phase 3A local action evidence", live)
+        self.assertIn("tmux server PID was unchanged", live)
+        self.assertIn("`agentSessions` plugin path remained", live)
+        self.assertIn("five expected `hook_untrusted` diagnostics", live)
         self.assertNotIn("dms logs", live)
 
 
