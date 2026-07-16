@@ -45,37 +45,35 @@ PluginSettings {
         function loadValue() {
             const settings = findSettings();
             if (!settings || !settings.pluginService)
-                return ;
+                return;
 
             const loadedValue = String(settings.loadValue("swbctl", "swbctl") || "swbctl");
             const boundedValue = SwitchboardModel.boundedExecutable(loadedValue);
             if (executableField.activeFocus && isInitialized)
-                return ;
+                return;
 
             value = boundedValue;
             executableField.text = boundedValue;
             isInitialized = true;
             if (boundedValue !== loadedValue)
                 settings.saveValue("swbctl", boundedValue);
-
         }
 
         function commit() {
             if (!isInitialized)
-                return ;
+                return;
 
             const boundedValue = SwitchboardModel.boundedExecutable(executableField.text);
             if (executableField.text !== boundedValue)
                 executableField.text = boundedValue;
 
             if (boundedValue === value)
-                return ;
+                return;
 
             value = boundedValue;
             const settings = findSettings();
             if (settings)
                 settings.saveValue("swbctl", boundedValue);
-
         }
 
         width: parent.width
@@ -107,10 +105,8 @@ PluginSettings {
             onActiveFocusChanged: {
                 if (!activeFocus)
                     executableSetting.commit();
-
             }
         }
-
     }
 
     SliderSetting {
@@ -140,5 +136,4 @@ PluginSettings {
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
-
 }

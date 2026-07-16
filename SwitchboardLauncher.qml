@@ -32,7 +32,7 @@ Item {
     property int runSettingsGeneration: -1
     property int runGeneration: 0
 
-    signal itemsChanged()
+    signal itemsChanged
 
     function boundedInteger(value, minimum, maximum, fallback) {
         const parsed = parseInt(value);
@@ -44,7 +44,7 @@ Item {
 
     function loadSettings() {
         if (!pluginService)
-            return ;
+            return;
 
         const configuredExecutable = pluginService.loadPluginData(pluginName, "swbctl", "swbctl");
         const nextExecutable = SwitchboardModel.boundedExecutable(configuredExecutable);
@@ -56,7 +56,6 @@ Item {
         refreshSeconds = nextRefresh;
         if (changed)
             settingsGeneration += 1;
-
     }
 
     function snapshotIsStale(now) {
@@ -67,11 +66,10 @@ Item {
         const now = Date.now();
         if (lastGoodModel === null) {
             scheduleRun(false);
-            return ;
+            return;
         }
         if (snapshotIsStale(now))
             scheduleRun(true);
-
     }
 
     function getItems(query) {
@@ -86,7 +84,7 @@ Item {
     }
 
     function executeItem(item) {
-        return ;
+        return;
     }
 
     function scheduleRun(refresh) {
@@ -104,7 +102,7 @@ Item {
             queuedRefresh = queuedRefresh || plan.queueRefresh;
         }
         if (!plan.shouldSchedule)
-            return ;
+            return;
 
         startScheduled = true;
         Qt.callLater(root.startPendingRun);
@@ -112,14 +110,14 @@ Item {
 
     function startPendingRun() {
         if (!startScheduled)
-            return ;
+            return;
 
         startScheduled = false;
         if (runActive || refreshProcess.running) {
             queuedRun = true;
             queuedRefresh = queuedRefresh || pendingRefresh;
             pendingRefresh = false;
-            return ;
+            return;
         }
         const refresh = pendingRefresh;
         pendingRefresh = false;
@@ -176,11 +174,11 @@ Item {
             "runExpired": runExpired
         }, deadline);
         if (disposition === "none")
-            return ;
+            return;
 
         if (disposition === "wait") {
             maybeFinishRun();
-            return ;
+            return;
         }
         if (disposition === "stale") {
             queuedRun = true;
@@ -198,7 +196,7 @@ Item {
 
     function maybeFinishRun() {
         if (!runActive || !stdoutFinished || !stderrFinished || !exitFinished)
-            return ;
+            return;
 
         bridgeDeadline.stop();
         if (runSettingsGeneration !== settingsGeneration) {
@@ -237,13 +235,12 @@ Item {
     onPluginServiceChanged: {
         if (pluginService)
             loadSettings();
-
     }
 
     Connections {
         function onPluginDataChanged(changedPluginId) {
             if (changedPluginId !== root.pluginName)
-                return ;
+                return;
 
             root.loadSettings();
             root.scheduleRun(false);
@@ -259,11 +256,11 @@ Item {
         repeat: false
         onTriggered: {
             if (!root.runActive)
-                return ;
+                return;
 
             if (!refreshProcess.running) {
                 root.finishStoppedRunIfNeeded(root.runGeneration, true);
-                return ;
+                return;
             }
             root.runExpired = true;
             if (root.runSettingsGeneration !== root.settingsGeneration) {
@@ -284,7 +281,6 @@ Item {
         onRunningChanged: {
             if (!running && root.runActive)
                 root.scheduleStoppedRunCheck(root.runGeneration);
-
         }
         onExited: (exitCode, exitStatus) => {
             root.runExitCode = exitCode;
@@ -306,7 +302,5 @@ Item {
                 root.maybeFinishRun();
             }
         }
-
     }
-
 }
