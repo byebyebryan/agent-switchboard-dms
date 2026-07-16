@@ -1,0 +1,113 @@
+#!/bin/sh
+set -eu
+
+usage() {
+    cat <<'EOF'
+Usage: scripts/dev-plugin [--plugin-dir DIRECTORY] install|remove|status
+
+Manage the repository checkout as the DMS user plugin named "switchboard".
+The default plugin directory is:
+
+  ${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins
+
+Set DMS_PLUGIN_DIR or pass --plugin-dir to use a different existing directory.
+This script only manages its own symlink. DMS scan/enable/disable/reload remains
+explicit through `dms ipc call`.
+EOF
+}
+
+die() {
+    printf 'dev-plugin: %s\n' "$*" >&2
+    exit 1
+}
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+plugin_dir=${DMS_PLUGIN_DIR:-${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/DankMaterialShell/plugins}
+
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --plugin-dir)
+            [ "$#" -ge 2 ] || die "--plugin-dir requires a value"
+            plugin_dir=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        install|remove|status)
+            action=$1
+            shift
+            break
+            ;;
+        *)
+            usage >&2
+            die "unknown argument: $1"
+            ;;
+    esac
+done
+
+[ "${action:-}" ] || {
+    usage >&2
+    die "an action is required"
+}
+[ "$#" -eq 0 ] || die "unexpected argument: $1"
+[ -f "$repo_root/plugin.json" ] || die "repository plugin.json is missing"
+
+plugin_id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("id", ""))' "$repo_root/plugin.json")
+[ "$plugin_id" = switchboard ] || die "repository plugin id is not switchboard"
+
+[ -d "$plugin_dir" ] || die "plugin directory does not exist: $plugin_dir"
+[ ! -L "$plugin_dir" ] || die "plugin directory must not itself be a symlink: $plugin_dir"
+plugin_dir=$(CDPATH= cd -- "$plugin_dir" && pwd -P)
+[ "$plugin_dir" != / ] || die "refusing to use the filesystem root"
+
+current_uid=$(id -u)
+repo_uid=$(stat -c '%u' "$repo_root")
+plugin_dir_uid=$(stat -c '%u' "$plugin_dir")
+[ "$repo_uid" = "$current_uid" ] || die "repository is not owned by the current user: $repo_root"
+[ "$plugin_dir_uid" = "$current_uid" ] || die "plugin directory is not owned by the current user: $plugin_dir"
+
+destination=$plugin_dir/$plugin_id
+
+managed_link() {
+    [ -L "$destination" ] || return 1
+    resolved=$(realpath -e -- "$destination" 2>/dev/null) || return 1
+    [ "$resolved" = "$repo_root" ]
+}
+
+case $action in
+    install)
+        if [ -e "$destination" ] || [ -L "$destination" ]; then
+            managed_link || die "destination exists and is not this checkout's symlink: $destination"
+            printf 'already installed: %s -> %s\n' "$destination" "$repo_root"
+            exit 0
+        fi
+        ln -s -- "$repo_root" "$destination"
+        managed_link || {
+            rm -f -- "$destination"
+            die "installed symlink did not resolve back to this checkout"
+        }
+        printf 'installed: %s -> %s\n' "$destination" "$repo_root"
+        ;;
+    remove)
+        if [ ! -e "$destination" ] && [ ! -L "$destination" ]; then
+            printf 'not installed: %s\n' "$destination"
+            exit 0
+        fi
+        managed_link || die "refusing to remove a path not owned by this checkout: $destination"
+        rm -- "$destination"
+        printf 'removed: %s\n' "$destination"
+        ;;
+    status)
+        if managed_link; then
+            printf 'installed: %s -> %s\n' "$destination" "$repo_root"
+        elif [ -e "$destination" ] || [ -L "$destination" ]; then
+            printf 'foreign: %s\n' "$destination"
+            exit 2
+        else
+            printf 'not installed: %s\n' "$destination"
+            exit 1
+        fi
+        ;;
+esac

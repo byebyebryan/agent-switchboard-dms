@@ -5,5 +5,20 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
 python3 -m json.tool plugin.json >/dev/null
+sh -n scripts/check scripts/dev-plugin scripts/live-cleanup.sh scripts/live-integration scripts/live-shell-integration
 python3 -m unittest discover -s tests -v
 node tests/test_model.js
+
+qt6_qmlformat=${QT6_QMLFORMAT:-/usr/lib/qt6/bin/qmlformat}
+if [ -x "$qt6_qmlformat" ]; then
+    for qml_file in SwitchboardLauncher.qml SwitchboardSettings.qml tests/live/Shell.qml; do
+        formatted=$(mktemp)
+        "$qt6_qmlformat" "$qml_file" >"$formatted"
+        if ! cmp -s "$qml_file" "$formatted"; then
+            printf 'Qt 6 qmlformat differs: %s\n' "$qml_file" >&2
+            rm -f "$formatted"
+            exit 1
+        fi
+        rm -f "$formatted"
+    done
+fi
