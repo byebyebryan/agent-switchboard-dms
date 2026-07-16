@@ -25,7 +25,7 @@ in-place update.
 Acceptance criteria were a documented, versioned boundary; a pinned synthetic
 Snapshot v1 fixture; and explicit non-goals. Those criteria are complete.
 
-## Phase 1: inert DMS scaffold
+## Phase 1: inert DMS scaffold (complete)
 
 Deliver the smallest installable repository surface without runtime behavior:
 
@@ -44,22 +44,29 @@ tests, shell syntax validation, meaningful whitespace checks, and successful
 local `qmllint` when available. CI runs only the dependency-free baseline;
 `qmllint` and `qmltestrunner` support are not claimed in CI yet.
 
-## Phase 2: bounded Snapshot bridge, model, and tests
+## Phase 2: bounded Snapshot bridge, model, and tests (complete)
 
-Add a narrow read-only bridge behind the locked boundary:
+The read-only bridge is implemented behind the locked boundary:
 
-- Resolve `swbctl` from explicit plugin configuration or normal executable
-  lookup, never from a machine-specific path.
-- Construct argument arrays directly; do not build shell commands.
-- Limit execution to the four accepted read commands and run refresh work
-  asynchronously with timeout, exit, stdout, and parse error handling.
-- Parse Snapshot v1 defensively into a small frontend-owned model, ignoring
-  unknown fields while rejecting incompatible envelopes.
-- Test command construction, schema/version handling, unknown fields,
-  malformed output, nonzero exits, timeouts, and fixture-backed projections.
+- `switchboard_dms.protocol` parses Snapshot v1 defensively into a bounded,
+  deterministic frontend-owned model, ignoring safe unknown fields while
+  rejecting incompatible or sensitive envelopes.
+- `switchboard_dms.process` drains both child pipes concurrently with strict
+  time and byte limits and kills the isolated process group on every abnormal
+  execution or cleanup exit.
+- `switchboard_dms.bridge` constructs only the retained and full-refresh
+  snapshot argv arrays, without shell parsing or machine-specific paths.
+- The executable emits one deterministic versioned JSON envelope, preserves
+  valid neutral/degraded provider state as success, and maps process, UTF-8,
+  JSON, protocol, and serialization failures to stable bounded errors.
+- Deterministic tests cover argv, schema/version handling, unknown fields,
+  malformed output, nonzero exits, timeouts, process-group cleanup, pipe
+  overflow, strict single-document framing, fixture projections, independently
+  bounded protocol diagnostics, privacy boundaries, and serialized size.
 
-Acceptance requires a fully tested bridge/model boundary with no QML launcher
-behavior change, no internal Agent Switchboard imports, and no database reads.
+Acceptance is satisfied by the fully tested bridge/model boundary with no QML
+launcher behavior change, internal Agent Switchboard imports, or direct private
+database reads. The exact contract is recorded in `docs/bridge-contract.md`.
 
 ## Phase 3: launcher, settings, cache, and degradation
 

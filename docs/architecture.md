@@ -15,17 +15,38 @@ The only accepted CLI commands are:
 - `swbctl list --json`
 - `swbctl list --refresh --json`
 
-This initial scaffold invokes none of them. Future read-only work may select
-among those commands, but it must not import internal Agent Switchboard
-modules, query internal databases, or depend on private storage layouts.
-Snapshot v1 JSON is the only interchange format at this boundary. Unknown
-fields in that envelope are ignored for forward compatibility.
+The implemented bridge deliberately chooses the two snapshot forms from that
+public set: retained reads use `swbctl snapshot --json`, and refreshes use
+`swbctl snapshot --reconcile full --json`. It must not import internal Agent
+Switchboard modules, query internal databases, or depend on private storage
+layouts, and it does not invoke provider commands itself. The refresh form
+intentionally asks `swbctl` to reconcile providers behind that public boundary.
+Snapshot v1 JSON is the only interchange format at this boundary.
+Unknown fields in that envelope are ignored for forward compatibility.
+
+## Process bridge
+
+The repository-owned `switchboard-bridge` executable is the only process
+adapter intended for QML. It accepts one configured executable token, builds a
+fixed argv array, and never invokes a shell. Its process layer drains stdout and
+stderr concurrently under strict byte and time limits. Every abnormal process
+or cleanup exit kills the isolated child process group and reaps its direct
+child.
+
+The bridge validates UTF-8 and JSON syntax before applying the frontend-owned
+Snapshot v1 protocol model. This classification uses exception types and
+validation stages, never diagnostic prose. Valid provider degradation remains
+a successful model; process and protocol failures become stable structured
+errors. Managed runs emit one deterministic JSON object on writable stdout and
+nothing on stderr. A broken stdout exits as a silent managed failure. The full
+versioned contract is in
+[bridge-contract.md](bridge-contract.md).
 
 ## Launcher data flow
 
 DMS calls `getItems(query)` synchronously, so the future launcher must answer
-from an in-memory cache. Refreshing `swbctl` will be asynchronous and separate
-from reads:
+from an in-memory cache. Invoking `switchboard-bridge` will be asynchronous and
+separate from reads:
 
 1. Return filtered items from the current cache immediately.
 2. Start or coalesce an asynchronous refresh when the cache is stale.
