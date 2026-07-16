@@ -6,3 +6,4 @@ cd "$repo_root"
 
 python3 -m json.tool plugin.json >/dev/null
 python3 -m unittest discover -s tests -v
+node tests/test_model.js
