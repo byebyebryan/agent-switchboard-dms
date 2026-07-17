@@ -150,8 +150,22 @@ QML formatting, Ruff, package Pyright, and diff checks. Live adoption focused
 an existing Ghostty window without changing niri window count or the tmux
 server PID. A DMS plugin reload and `sb:` query kept both DMS and tmux service
 identities stable and did not modify the separate legacy `agentSessions`
-plugin. The remaining user-owned Codex `/hooks` trust gate is recorded in
+plugin. After the five Codex hooks were trusted, parked-session startup and
+same-session reopen also passed without duplicating the managed window or
+Codex runtime; the final evidence is recorded in
 [live-integration.md](live-integration.md).
+
+## Roadmap handoff
+
+This repository's existing-local-Codex action slice is complete. Cross-repo
+development returns next to Agent Switchboard Phase 2B for Claude discovery,
+hooks, supervisor/process liveness, and normalized runtime truth. DMS does not
+add Claude actions before those core capabilities exist.
+
+After Phase 2B, DMS resumes with Phase 3B parity for project-aware new local
+Codex sessions, then Phase 3C parity for core-authored Claude workspace and
+session presentation plans. The legacy `agentSessions` plugin remains the
+Claude and remote fallback until those paths pass equivalent live validation.
 
 ## Final audit and local handoff
 

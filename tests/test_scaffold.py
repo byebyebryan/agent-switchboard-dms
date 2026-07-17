@@ -242,7 +242,10 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("Phase 3A local action evidence", live)
         self.assertIn("tmux server PID was unchanged", live)
         self.assertIn("`agentSessions` plugin path remained", live)
-        self.assertIn("five expected `hook_untrusted` diagnostics", live)
+        self.assertIn("all five Agent Switchboard handlers", live)
+        self.assertIn("reported healthy on Codex 0.144.4", live)
+        self.assertIn("did not leave a retained `SessionStart` event", live)
+        self.assertIn("Phase 3A live DMS acceptance", live)
         self.assertNotIn("dms logs", live)
 
 

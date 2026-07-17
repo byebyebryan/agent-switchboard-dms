@@ -176,18 +176,23 @@ public core commands without restarting DMS or tmux:
    service PID and tmux server PID remained unchanged. The separate legacy
    `agentSessions` plugin path remained present and untouched.
 
-Codex hook installation also completed through
-`swbctl hooks install --provider codex`. `swbctl doctor` reached Codex 0.144.4
-and found only the five expected `hook_untrusted` diagnostics. Trust cannot be
-written by Switchboard: review the Agent Switchboard definitions with `/hooks`
-inside Codex, trust `SessionStart`, `UserPromptSubmit`, `PermissionRequest`,
-`PostToolUse`, and `Stop`, then rerun `swbctl doctor`.
+Codex hook installation completed through
+`swbctl hooks install --provider codex`, and all five Agent Switchboard handlers
+were subsequently reviewed and trusted through Codex `/hooks`. `swbctl doctor`
+then reported healthy on Codex 0.144.4.
 
-Until that explicit trust step produces a healthy doctor result, this evidence
-claims the live adoption/focus and DMS reload paths, but not live hook coverage
-or parked-session end-to-end startup. Deterministic tests cover the waiting
-surface, lease, same-request focus fallback, attach argv, and final
-duplicate-runtime check without starting a second live Codex TUI.
+The trusted parked-session exercise opened one retained resumable session
+through `switchboard-open`. DMS launched one managed Ghostty window attached to
+one waiting tmux surface, and core started exactly one
+`codex resume <session-uuid>` process. The existing tmux server PID was
+unchanged. That Codex resume did not leave a retained `SessionStart` event, so
+core required exact durable session ID, process-birth, and full launch-owned
+tmux locator evidence before atomically confirming the surface binding.
+
+Opening the same session again returned a `focused` action for the existing
+surface. The managed Ghostty window count and matching Codex process count both
+remained one. This completes the Phase 3A live DMS acceptance without claiming
+that every Codex resume emits `SessionStart`.
 
 ## Qt 6 and automation boundary
 
