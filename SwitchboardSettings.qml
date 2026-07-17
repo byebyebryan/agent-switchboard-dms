@@ -19,7 +19,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Local Codex sessions from Agent Switchboard, with validated focus and terminal-opening actions."
+        text: "Local Codex projects and sessions from Agent Switchboard, with validated start, focus, and terminal-opening actions."
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap

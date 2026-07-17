@@ -13,6 +13,7 @@ from switchboard_dms.desktop import (
     desktop_app_id,
     focus_existing_window,
     matching_niri_window_id,
+    open_project,
     open_session,
     serialize_response,
     terminal_launch_argv,
@@ -26,6 +27,8 @@ SESSION_KEY = (
 )
 REQUEST_ID = "77777777-7777-4777-8777-777777777777"
 SURFACE_ID = "33333333-3333-4333-8333-333333333333"
+PROJECT_ID = "22222222-2222-4222-8222-222222222222"
+LOCATION_ID = "44444444-4444-4444-8444-444444444444"
 TOKEN = f"surface:{SURFACE_ID}"
 
 
@@ -197,6 +200,8 @@ class DesktopActionTests(unittest.TestCase):
         prepared.assert_called_once_with(
             swbctl="swbctl",
             session_key=SESSION_KEY,
+            project_id=None,
+            location_id=None,
             request_id=REQUEST_ID,
             timeout_ms=1000,
             can_focus_desktop=True,
@@ -232,6 +237,8 @@ class DesktopActionTests(unittest.TestCase):
                 call(
                     swbctl="/opt/swb ctl",
                     session_key=SESSION_KEY,
+                    project_id=None,
+                    location_id=None,
                     request_id=REQUEST_ID,
                     timeout_ms=1000,
                     can_focus_desktop=True,
@@ -239,11 +246,44 @@ class DesktopActionTests(unittest.TestCase):
                 call(
                     swbctl="/opt/swb ctl",
                     session_key=SESSION_KEY,
+                    project_id=None,
+                    location_id=None,
                     request_id=REQUEST_ID,
                     timeout_ms=1000,
                     can_focus_desktop=False,
                 ),
             ],
+        )
+        self.assertEqual(launched[0][-2:], ["attach-surface", SURFACE_ID])
+
+    @patch("switchboard_dms.desktop._prepared_plan")
+    def test_new_project_uses_only_stable_ids_and_shared_attach_path(
+        self, prepared
+    ) -> None:
+        prepared.return_value = plan("attach", tmuxTarget='{"pane":"%9"}')
+        launched: list[list[str]] = []
+
+        result = open_project(
+            swbctl="swbctl",
+            terminal="ghostty",
+            project_id=PROJECT_ID,
+            location_id=LOCATION_ID,
+            window_host="snap",
+            timeout_ms=1000,
+            request_id=REQUEST_ID,
+            which=self.which,
+            launcher=lambda argv: launched.append(list(argv)),
+        )
+
+        self.assertEqual(result, {"kind": "launched", "surfaceId": SURFACE_ID})
+        prepared.assert_called_once_with(
+            swbctl="swbctl",
+            session_key=None,
+            project_id=PROJECT_ID,
+            location_id=LOCATION_ID,
+            request_id=REQUEST_ID,
+            timeout_ms=1000,
+            can_focus_desktop=True,
         )
         self.assertEqual(launched[0][-2:], ["attach-surface", SURFACE_ID])
 

@@ -15,6 +15,7 @@ The only accepted CLI commands are:
 - `swbctl list --json`
 - `swbctl list --refresh --json`
 - `swbctl prepare-open <session-key> --request-id <uuid> --json`
+- `swbctl prepare-new --project <project-id> --location <location-id> --request-id <uuid> --json`
 - `swbctl select-surface <surface-id> --client <tmux-client-id>`
 - `swbctl attach-surface <surface-id>`
 
@@ -50,9 +51,10 @@ nothing on stderr. A broken stdout exits as a silent managed failure. The full
 versioned contract is in
 [bridge-contract.md](bridge-contract.md).
 
-The repository-owned `switchboard-open` executable is the QML session-action
-adapter. It generates one request UUID, asks the same validated bridge layer for
-a plan, and performs only the advertised operation:
+The repository-owned `switchboard-open` executable is the QML presentation
+adapter. It accepts either one canonical session key or one canonical
+project/location pair, generates one request UUID, asks the same validated
+bridge layer for a plan, and performs only the advertised operation:
 
 1. `focus` matches a niri window by a SHA-256-derived Wayland application ID.
    An adopted pre-Switchboard pane can instead match the exact tmux workspace
@@ -105,18 +107,21 @@ State presentation remains honest. Missing observations and stale data are
 unknown; the UI does not infer liveness or activity. The bridge turns an empty
 `capabilities` array into a neutral Codex capability, which the launcher renders
 as unknown rather than unavailable. Session rows display source-authored
-activity, runtime presence, resumability, and attachment values. Selection is
-available only for session items and always runs asynchronously through the
-validated action helper. Structured action failures become the current failure
-item; a success schedules a full snapshot refresh.
+activity, runtime presence, resumability, and attachment values. The bridge also
+projects only declared local project locations whose configured provider and
+transport resolve to Codex and tmux. Launch targets contain stable IDs and
+bounded display fields, never paths or provider argv. Session and launch-target
+selection always runs asynchronously through the validated action helper.
+Structured action failures become the current failure item; a success schedules
+a full snapshot refresh.
 
 The bridge remains the authoritative full Snapshot and projected-model
 validator. The pure `SwitchboardModel.js` consumer additionally validates the
 versioned envelope, required display shape, Codex identity coherence, and state
 enums while accepting unknown forward-compatible fields. It projects stable
-item IDs from `sessionKey`, orders sessions by descending `recencyAt` then
-ascending `sessionKey`, and searches name, path, project, location, host, and
-full session identity.
+item IDs from session, project, and location identities; orders sessions by
+recency and launch targets canonically; and searches name, path, project,
+location, host, and stable identity.
 
 The launcher surface emits `itemsChanged()` after state changes, but DMS 1.5.0's
 `AppSearchService.getPluginItemsForPlugin()` directly invokes `getItems()` and
@@ -131,7 +136,7 @@ This repository does not currently provide:
 - Claude support
 - SSH support or remote-host orchestration
 - provider hooks or liveness inference
-- project or new-session actions
+- arbitrary working-directory launch or project-catalog editing
 - direct tmux locator construction or provider launch logic
 - non-niri compositors or non-Ghostty terminal adapters
 - a chezmoi cutover or configuration migration

@@ -10,7 +10,8 @@ The bridge invokes only public `swbctl` commands. Snapshot reads validate
 Snapshot v1 and emit a smaller frontend-owned model. Action modes validate
 PresentationPlan v1 or delegate one exact surface selection. It does not
 directly read Switchboard storage or invoke providers, terminals, or the
-compositor. `--refresh` and `prepare-open` intentionally ask `swbctl` to perform
+compositor. `--refresh`, `prepare-open`, and `prepare-new` intentionally ask
+`swbctl` to perform
 full reconciliation behind that public boundary.
 
 ## Invocation
@@ -20,6 +21,9 @@ full reconciliation behind that public boundary.
     [--timeout-ms MILLISECONDS] [--max-sessions COUNT]
 ./switchboard-bridge [--swbctl EXECUTABLE]
     --prepare-open SESSION-KEY --request-id UUID
+    [--timeout-ms MILLISECONDS]
+./switchboard-bridge [--swbctl EXECUTABLE]
+    --prepare-new PROJECT-ID --location LOCATION-ID --request-id UUID
     [--timeout-ms MILLISECONDS]
 ./switchboard-bridge [--swbctl EXECUTABLE]
     --select-surface SURFACE-ID --tmux-client CLIENT-ID
@@ -33,11 +37,14 @@ full reconciliation behind that public boundary.
   "--json"]`.
 - `--timeout-ms` defaults to `10000` and accepts `100` through `60000`.
 - `--max-sessions` defaults to `1000` and accepts `1` through `1000`.
-- `--prepare-open` and `--select-surface` are mutually exclusive with one
-  another and with `--refresh`.
-- Preparation uses exactly `[EXECUTABLE, "prepare-open", SESSION_KEY,
+- `--prepare-open`, `--prepare-new`, and `--select-surface` are mutually
+  exclusive with one another and with `--refresh`.
+- Existing-session preparation uses exactly `[EXECUTABLE, "prepare-open", SESSION_KEY,
   "--request-id", UUID, "--can-focus-desktop", "--can-launch-terminal",
   "--json"]`.
+- New-session preparation uses exactly `[EXECUTABLE, "prepare-new",
+  "--project", PROJECT_ID, "--location", LOCATION_ID, "--request-id", UUID,
+  "--can-focus-desktop", "--can-launch-terminal", "--json"]`.
 - Selection uses exactly `[EXECUTABLE, "select-surface", SURFACE_ID,
   "--client", CLIENT_ID]` and requires empty stdout on success.
 
@@ -138,14 +145,15 @@ after a complete exit-zero success envelope passes frontend model validation.
 
 ## Desktop action envelope
 
-`switchboard-open` emits a separate `actionVersion: 1` envelope. Success kinds
+`switchboard-open` accepts either one session key or one project/location pair
+and emits a separate `actionVersion: 1` envelope. Success kinds
 are `focused`, `switched`, or `launched`, each with one stable surface ID.
 Failure uses the same bounded `{code,message,retryable}` display shape. The
 helper's stdout is one compact newline-terminated JSON object no larger than 16
 KiB; stderr is ignored by QML. It accepts one `--swbctl` token, one `--terminal`
 token, a bounded `--window-host`, the shared timeout, and one canonical session
-key. It never accepts raw tmux locators, provider argv, desktop tokens, or niri
-window IDs from QML.
+key or canonical project and location IDs. It never accepts cwd, raw tmux
+locators, provider argv, desktop tokens, or niri window IDs from QML.
 
 ## Reviewed contract provenance
 

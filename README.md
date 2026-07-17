@@ -1,12 +1,13 @@
 # Switchboard for DMS
 
-Switchboard is a DankMaterialShell (DMS) launcher integration for browsing and
-opening existing local Codex sessions from Agent Switchboard. The QML launcher
+Switchboard is a DankMaterialShell (DMS) launcher integration for starting,
+browsing, and opening local Codex sessions from Agent Switchboard. The QML launcher
 returns filtered rows from an in-memory last-good cache while persistent DMS
 `Process` instances run repository-owned snapshot and action helpers
-asynchronously. Selecting a session consumes a validated PresentationPlan v1,
-focuses its existing niri window, or opens Ghostty onto its core-owned tmux
-surface.
+asynchronously. Selecting a configured project location starts a new Codex
+session; selecting a retained session reopens it. Both consume a validated
+PresentationPlan v1 and either focus an existing niri window or open Ghostty
+onto a core-owned tmux surface.
 
 The integration boundary is deliberately narrow. `switchboard-bridge` runs a
 user-configured `swbctl` executable without a shell and consumes Snapshot v1
@@ -75,6 +76,13 @@ Open one canonical local Codex session key with:
 ./switchboard-open --window-host HOST-DISPLAY-NAME HOST-ID:codex:SESSION-UUID
 ```
 
+Start one new Codex session from canonical configured IDs with:
+
+```sh
+./switchboard-open --window-host HOST-DISPLAY-NAME \
+  --project PROJECT-UUID --location LOCATION-UUID
+```
+
 The helper generates one request ID. If focus fails, it reuses that ID while
 requesting an attach plan, so retries cannot reserve or start another Codex
 runtime.
@@ -95,7 +103,7 @@ Run the baseline checks with:
 ```
 
 The checks validate the plugin manifest, static QML cache/process surface,
-deterministic JavaScript projection and search behavior, architecture and
+deterministic JavaScript session/launch-target projection and search behavior, architecture and
 bridge contracts, bounded process behavior, Snapshot and PresentationPlan
 projection, niri matching, fixed Ghostty argv, same-request fallback, and the
 pinned synthetic protocol fixture. QML runtime tests are intentionally not claimed

@@ -76,6 +76,33 @@ def prepare_open_argv(
     return argv
 
 
+def prepare_new_argv(
+    executable: str,
+    *,
+    project_id: str,
+    location_id: str,
+    request_id: str,
+    can_focus_desktop: bool = True,
+    can_launch_terminal: bool = True,
+) -> list[str]:
+    argv = [
+        executable,
+        "prepare-new",
+        "--project",
+        project_id,
+        "--location",
+        location_id,
+        "--request-id",
+        request_id,
+    ]
+    if can_focus_desktop:
+        argv.append("--can-focus-desktop")
+    if can_launch_terminal:
+        argv.append("--can-launch-terminal")
+    argv.append("--json")
+    return argv
+
+
 def select_surface_argv(
     executable: str, *, surface_id: str, tmux_client: str
 ) -> list[str]:
@@ -166,6 +193,8 @@ def run_bridge(
     timeout_ms: int,
     max_sessions: int,
     prepare_open: str | None = None,
+    prepare_new: str | None = None,
+    location_id: str | None = None,
     request_id: str | None = None,
     prepare_can_focus_desktop: bool = True,
     prepare_can_launch_terminal: bool = True,
@@ -173,16 +202,28 @@ def run_bridge(
     tmux_client: str | None = None,
 ) -> dict[str, object]:
     try:
-        if prepare_open is not None:
+        if prepare_open is not None or prepare_new is not None:
             assert request_id is not None
-            output = run_process(
-                prepare_open_argv(
+            if prepare_open is not None:
+                argv = prepare_open_argv(
                     executable,
                     session_key=prepare_open,
                     request_id=request_id,
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
-                ),
+                )
+            else:
+                assert prepare_new is not None and location_id is not None
+                argv = prepare_new_argv(
+                    executable,
+                    project_id=prepare_new,
+                    location_id=location_id,
+                    request_id=request_id,
+                    can_focus_desktop=prepare_can_focus_desktop,
+                    can_launch_terminal=prepare_can_launch_terminal,
+                )
+            output = run_process(
+                argv,
                 timeout_ms=timeout_ms,
             )
             if output.exit_code != 0:
@@ -386,7 +427,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh", action="store_true")
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--prepare-open", type=_session_key)
+    actions.add_argument("--prepare-new", type=_uuid)
     actions.add_argument("--select-surface", type=_uuid)
+    parser.add_argument("--location", type=_uuid)
     parser.add_argument("--request-id", type=_uuid)
     parser.add_argument("--tmux-client", type=_tmux_client)
     parser.add_argument(
@@ -429,13 +472,14 @@ def _silence_stdout() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if (args.prepare_open is None) != (args.request_id is None):
-        parser.error("--prepare-open and --request-id must be supplied together")
+    preparing = args.prepare_open is not None or args.prepare_new is not None
+    if preparing != (args.request_id is not None):
+        parser.error("a prepare action and --request-id must be supplied together")
+    if (args.prepare_new is None) != (args.location is None):
+        parser.error("--prepare-new and --location must be supplied together")
     if (args.select_surface is None) != (args.tmux_client is None):
         parser.error("--select-surface and --tmux-client must be supplied together")
-    if (
-        args.prepare_open is not None or args.select_surface is not None
-    ) and args.refresh:
+    if (preparing or args.select_surface is not None) and args.refresh:
         parser.error("--refresh applies only to snapshot reads")
     try:
         response = run_bridge(
@@ -444,6 +488,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout_ms=args.timeout_ms,
             max_sessions=args.max_sessions,
             prepare_open=args.prepare_open,
+            prepare_new=args.prepare_new,
+            location_id=args.location,
             request_id=args.request_id,
             select_surface=args.select_surface,
             tmux_client=args.tmux_client,

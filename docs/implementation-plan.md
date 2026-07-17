@@ -157,13 +157,33 @@ Codex runtime; the final evidence is recorded in
 
 ## Roadmap handoff
 
-This repository's existing-local-Codex action slice is complete. Cross-repo
-development returns next to Agent Switchboard Phase 2B for Claude discovery,
-hooks, supervisor/process liveness, and normalized runtime truth. DMS does not
-add Claude actions before those core capabilities exist.
+This repository's existing-local-Codex action slice is complete. Phase 3B adds
+the implementation for project-aware new local Codex sessions: the bridge
+projects bounded launch targets, invokes core `prepare-new` with stable
+project/location IDs, and reuses the validated focus/switch/attach path. Live
+DMS acceptance is complete against one explicitly configured local project.
 
-After Phase 2B, DMS resumes with Phase 3B parity for project-aware new local
-Codex sessions, then Phase 3C parity for core-authored Claude workspace and
+The implementation checkpoint on 2026-07-16 passed 113 Python tests, 19
+deterministic JavaScript behavior groups, QML formatting, Ruff, package
+Pyright, and diff checks. The installed DMS 1.5.0 development plugin initially
+projected one declared Codex/tmux launch target alongside six retained sessions
+with no warnings. Core's controlled no-client live path expired without
+changing the Codex process or tmux session counts. After the user manually
+trusted the five installed Codex hooks, positive start/bind/reopen acceptance
+created one configured Codex thread and moved the live counts from 2 to 3
+Codex processes, 4 to 5 tmux sessions, and 1 to 2 niri windows. The refreshed
+bridge projected seven sessions and the same one privacy-safe launch target
+with no warnings. Reopening returned `focused` for the existing surface with
+all counts unchanged. The initial acceptance remained at the empty prompt past
+the original 30-second attachment lease, so exact missed-hook reconciliation
+supplied the binding. Core review added a distinct bounded five-minute
+provider-identity grace after attachment; a second no-write turn completed
+without hook errors. The adapter never bypassed Codex's provider-owned trust
+boundary.
+
+Phase 2B follows with Claude discovery, hooks, supervisor/process liveness, and
+normalized runtime truth. DMS does not add Claude actions before those core
+capabilities exist. Phase 3C then adds core-authored Claude workspace and
 session presentation plans. The legacy `agentSessions` plugin remains the
 Claude and remote fallback until those paths pass equivalent live validation.
 
@@ -174,7 +194,7 @@ Claude and remote fallback until those paths pass equivalent live validation.
 - Make small local commits with clear messages only after review.
 - Do not push; leave remote publication to an explicit later instruction.
 
-Claude, SSH, provider hooks/liveness, project/new-session actions, direct tmux
-locator or provider-launch logic, non-niri/non-Ghostty adapters, chezmoi
-cutover, and a rich widget remain non-goals. The legacy plugin remains the
-Claude and remote fallback.
+Claude, SSH, provider hooks/liveness, arbitrary working-directory launch,
+project-catalog editing, direct tmux locator or provider-launch logic,
+non-niri/non-Ghostty adapters, chezmoi cutover, and a rich widget remain
+non-goals. The legacy plugin remains the Claude and remote fallback.

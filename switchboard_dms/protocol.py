@@ -25,6 +25,8 @@ MAX_JSON_OBJECT_KEYS = 256
 MAX_SNAPSHOT_RECORDS = 100_000
 MAX_MODEL_SESSIONS = 1_000
 MAX_MODEL_SESSION_BYTES = 4 * 1024 * 1024
+MAX_MODEL_LAUNCH_TARGETS = 1_000
+MAX_MODEL_LAUNCH_TARGET_BYTES = 1024 * 1024
 MAX_MODEL_FEATURES = 64
 MAX_MODEL_FEATURE_BYTES = 64 * 1024
 MAX_MODEL_DEGRADED_REASONS = 64
@@ -34,6 +36,9 @@ MAX_MODEL_WARNINGS = 256
 MAX_MODEL_WARNING_BYTES = 1024 * 1024
 _MODEL_DIAGNOSTICS_MESSAGE = "The frontend model omitted diagnostics to remain bounded."
 _MODEL_SESSIONS_MESSAGE = "The frontend model omitted sessions to remain bounded."
+_MODEL_LAUNCH_TARGETS_MESSAGE = (
+    "The frontend model omitted launch targets to remain bounded."
+)
 
 _PROVIDERS = frozenset({"codex", "claude"})
 _TRANSPORTS = frozenset({"tmux"})
@@ -1184,6 +1189,52 @@ def _project_session(
     }
 
 
+def _launch_target_sort_key(target: dict[str, Any]) -> tuple[object, ...]:
+    location_name = target["locationName"]
+    return (
+        str(target["projectName"]).casefold(),
+        target["projectName"],
+        target["projectId"],
+        not target["isDefault"],
+        "" if location_name is None else str(location_name).casefold(),
+        "" if location_name is None else location_name,
+        target["locationId"],
+    )
+
+
+def _project_launch_targets(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project only config-resolved local Codex/tmux launch identities."""
+
+    projects = {
+        project["projectId"]: project
+        for project in snapshot["projects"]
+        if project.get("declared") is not False
+    }
+    targets: list[dict[str, Any]] = []
+    for location in snapshot["locations"]:
+        if location.get("declared") is False:
+            continue
+        project = projects.get(location["projectId"])
+        if project is None:
+            continue
+        provider = location.get("providerOverride") or project.get("defaultProvider")
+        transport = location.get("transportOverride") or project.get("defaultTransport")
+        if provider != "codex" or transport != "tmux":
+            continue
+        targets.append(
+            {
+                "projectId": project["projectId"],
+                "projectName": project["name"],
+                "locationId": location["locationId"],
+                "locationName": location.get("displayName"),
+                "provider": "codex",
+                "isDefault": location.get("isDefault", False),
+            }
+        )
+    targets.sort(key=_launch_target_sort_key)
+    return targets
+
+
 def _adapt_capability(
     capabilities: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
@@ -1283,7 +1334,7 @@ def _diagnostics(
         candidates.append(warning)
     warnings = _bounded_encoded_items(
         candidates,
-        count_limit=MAX_MODEL_WARNINGS - 2,
+        count_limit=MAX_MODEL_WARNINGS - 3,
         byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
     )
     emitted_errors = sum(warning["source"] == "error" for warning in warnings)
@@ -1300,7 +1351,7 @@ def _diagnostics(
                 truncation["degradedReasons"]["sourceCount"] + len(relevant_errors)
             ),
             emitted_count=len(warnings),
-            limit=MAX_MODEL_WARNINGS - 2,
+            limit=MAX_MODEL_WARNINGS - 3,
             byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
         ),
     }
@@ -1497,6 +1548,30 @@ def _validate_model_session(value: object, path: str, host_id: str) -> None:
     _boolean(table["pinned"], f"{path}.pinned")
 
 
+_MODEL_LAUNCH_TARGET_FIELDS = frozenset(
+    {
+        "projectId",
+        "projectName",
+        "locationId",
+        "locationName",
+        "provider",
+        "isDefault",
+    }
+)
+
+
+def _validate_model_launch_target(value: object, path: str) -> dict[str, Any]:
+    table = _exact_object(value, path, required=_MODEL_LAUNCH_TARGET_FIELDS)
+    _canonical_uuid(table["projectId"], f"{path}.projectId")
+    _string(table["projectName"], f"{path}.projectName", maximum=256)
+    _canonical_uuid(table["locationId"], f"{path}.locationId")
+    _nullable_string(table["locationName"], f"{path}.locationName", maximum=256)
+    if table["provider"] != "codex":
+        raise ProtocolError(f"{path}.provider must be codex")
+    _boolean(table["isDefault"], f"{path}.isDefault")
+    return table
+
+
 def _validate_model_degradation(value: object, path: str) -> None:
     table = _exact_object(
         value,
@@ -1663,6 +1738,7 @@ def _validate_model_warnings(
     capability: dict[str, Any],
     diagnostic_truncation: dict[str, dict[str, Any]],
     session_truncation: dict[str, Any],
+    launch_target_truncation: dict[str, Any],
 ) -> None:
     expected_capability_warnings: list[dict[str, Any]] = []
     for reason in capability["degradedReasons"]:
@@ -1757,6 +1833,21 @@ def _validate_model_warnings(
                 "byteLimit": session_truncation["byteLimit"],
             }
         )
+    if launch_target_truncation["truncated"]:
+        expected_model_warnings.append(
+            {
+                "source": "model",
+                "code": "model_launch_targets_truncated",
+                "message": _MODEL_LAUNCH_TARGETS_MESSAGE,
+                "retryable": False,
+                "details": {
+                    "emittedCount": launch_target_truncation["emittedCount"],
+                    "retainedCount": launch_target_truncation["sourceCount"],
+                },
+                "limit": launch_target_truncation["limit"],
+                "byteLimit": launch_target_truncation["byteLimit"],
+            }
+        )
     if model_warnings != expected_model_warnings:
         raise ProtocolError("model truncation warnings are inconsistent")
 
@@ -1774,10 +1865,12 @@ def _validate_snapshot_model(value: object) -> None:
                 "generatedAt",
                 "host",
                 "sessions",
+                "launchTargets",
                 "codexCapability",
                 "warnings",
                 "diagnosticTruncation",
                 "truncation",
+                "launchTargetTruncation",
             }
         ),
     )
@@ -1803,6 +1896,26 @@ def _validate_snapshot_model(value: object) -> None:
     if sessions != expected_order:
         raise ProtocolError("model.sessions are not in canonical recency order")
     _validate_encoded_limit(sessions, f"{path}.sessions", MAX_MODEL_SESSION_BYTES)
+
+    launch_targets = _array(
+        table["launchTargets"],
+        f"{path}.launchTargets",
+        maximum=MAX_MODEL_LAUNCH_TARGETS,
+    )
+    validated_targets = [
+        _validate_model_launch_target(target, f"{path}.launchTargets[{index}]")
+        for index, target in enumerate(launch_targets)
+    ]
+    location_ids = [target["locationId"] for target in validated_targets]
+    if len(location_ids) != len(set(location_ids)):
+        raise ProtocolError("model.launchTargets contains duplicate locationId values")
+    if launch_targets != sorted(validated_targets, key=_launch_target_sort_key):
+        raise ProtocolError("model.launchTargets are not in canonical order")
+    _validate_encoded_limit(
+        launch_targets,
+        f"{path}.launchTargets",
+        MAX_MODEL_LAUNCH_TARGET_BYTES,
+    )
 
     capability = _validate_model_capability(table["codexCapability"])
     warnings = _array(table["warnings"], f"{path}.warnings", maximum=MAX_MODEL_WARNINGS)
@@ -1836,7 +1949,7 @@ def _validate_snapshot_model(value: object) -> None:
         "warnings": _validate_truncation_summary(
             diagnostic_table["warnings"],
             f"{path}.diagnosticTruncation.warnings",
-            expected_limit=MAX_MODEL_WARNINGS - 2,
+            expected_limit=MAX_MODEL_WARNINGS - 3,
             expected_byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
             maximum_source_count=MAX_JSON_ARRAY_ITEMS * 2,
         ),
@@ -1864,12 +1977,21 @@ def _validate_snapshot_model(value: object) -> None:
         expected_emitted_count=len(sessions),
         maximum_source_count=MAX_SNAPSHOT_RECORDS,
     )
+    launch_target_truncation = _validate_truncation_summary(
+        table["launchTargetTruncation"],
+        f"{path}.launchTargetTruncation",
+        expected_limit=MAX_MODEL_LAUNCH_TARGETS,
+        expected_byte_limit=MAX_MODEL_LAUNCH_TARGET_BYTES,
+        expected_emitted_count=len(launch_targets),
+        maximum_source_count=MAX_SNAPSHOT_RECORDS,
+    )
     _validate_model_warnings(
         warnings,
         host_id=host_id,
         capability=capability,
         diagnostic_truncation=diagnostic_truncation,
         session_truncation=session_truncation,
+        launch_target_truncation=launch_target_truncation,
     )
 
 
@@ -1886,15 +2008,21 @@ class SnapshotModel:
     generated_at: int
     host: dict[str, Any]
     sessions: tuple[dict[str, Any], ...]
+    launch_targets: tuple[dict[str, Any], ...]
     codex_capability: dict[str, Any]
     warnings: tuple[dict[str, Any], ...]
     diagnostic_truncation: dict[str, dict[str, Any]]
     source_session_count: int
     session_limit: int
+    source_launch_target_count: int
 
     @property
     def truncated(self) -> bool:
         return len(self.sessions) < self.source_session_count
+
+    @property
+    def launch_targets_truncated(self) -> bool:
+        return len(self.launch_targets) < self.source_launch_target_count
 
     def to_dict(self) -> dict[str, Any]:
         session_truncation = _truncation_summary(
@@ -1903,6 +2031,12 @@ class SnapshotModel:
             limit=self.session_limit,
             byte_limit=MAX_MODEL_SESSION_BYTES,
         )
+        launch_target_truncation = _truncation_summary(
+            source_count=self.source_launch_target_count,
+            emitted_count=len(self.launch_targets),
+            limit=MAX_MODEL_LAUNCH_TARGETS,
+            byte_limit=MAX_MODEL_LAUNCH_TARGET_BYTES,
+        )
         value: dict[str, Any] = {
             "modelVersion": 1,
             "sourceSchemaVersion": SCHEMA_VERSION,
@@ -1910,10 +2044,14 @@ class SnapshotModel:
             "generatedAt": self.generated_at,
             "host": deepcopy(self.host),
             "sessions": _model_collection(self.sessions, "model.sessions"),
+            "launchTargets": _model_collection(
+                self.launch_targets, "model.launchTargets"
+            ),
             "codexCapability": deepcopy(self.codex_capability),
             "warnings": _model_collection(self.warnings, "model.warnings"),
             "diagnosticTruncation": deepcopy(self.diagnostic_truncation),
             "truncation": session_truncation,
+            "launchTargetTruncation": launch_target_truncation,
         }
         _validate_json_tree(value, "model")
         _validate_snapshot_model(value)
@@ -1951,8 +2089,10 @@ class SnapshotModel:
 def _build_model(
     snapshot: dict[str, Any],
     sessions: list[dict[str, Any]],
+    launch_targets: list[dict[str, Any]],
     *,
     source_count: int,
+    source_launch_target_count: int,
     limit: int,
 ) -> SnapshotModel:
     capability, capability_truncation = _adapt_capability(snapshot["capabilities"])
@@ -1974,15 +2114,32 @@ def _build_model(
                 "byteLimit": MAX_MODEL_SESSION_BYTES,
             }
         )
+    if len(launch_targets) < source_launch_target_count:
+        warnings.append(
+            {
+                "source": "model",
+                "code": "model_launch_targets_truncated",
+                "message": _MODEL_LAUNCH_TARGETS_MESSAGE,
+                "retryable": False,
+                "details": {
+                    "emittedCount": len(launch_targets),
+                    "retainedCount": source_launch_target_count,
+                },
+                "limit": MAX_MODEL_LAUNCH_TARGETS,
+                "byteLimit": MAX_MODEL_LAUNCH_TARGET_BYTES,
+            }
+        )
     return SnapshotModel(
         generated_at=snapshot["generatedAt"],
         host=deepcopy(snapshot["host"]),
         sessions=tuple(deepcopy(sessions)),
+        launch_targets=tuple(deepcopy(launch_targets)),
         codex_capability=capability,
         warnings=tuple(warnings),
         diagnostic_truncation=diagnostic_truncation,
         source_session_count=source_count,
         session_limit=limit,
+        source_launch_target_count=source_launch_target_count,
     )
 
 
@@ -2012,10 +2169,18 @@ def parse_snapshot(
         count_limit=max_sessions,
         byte_limit=MAX_MODEL_SESSION_BYTES,
     )
+    launch_targets = _project_launch_targets(snapshot)
+    selected_launch_targets = _bounded_encoded_items(
+        launch_targets,
+        count_limit=MAX_MODEL_LAUNCH_TARGETS,
+        byte_limit=MAX_MODEL_LAUNCH_TARGET_BYTES,
+    )
     model = _build_model(
         snapshot,
         selected,
+        selected_launch_targets,
         source_count=source_count,
+        source_launch_target_count=len(launch_targets),
         limit=max_sessions,
     )
     model.to_json()

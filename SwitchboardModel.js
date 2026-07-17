@@ -74,6 +74,16 @@ function _validateSession(session, hostId) {
     return true
 }
 
+function _validateLaunchTarget(target) {
+    if (!_object(target) || target.provider !== "codex")
+        return false
+    if (!_string(target.projectId) || !_string(target.projectName))
+        return false
+    if (!_string(target.locationId) || !_optionalString(target.locationName))
+        return false
+    return typeof target.isDefault === "boolean"
+}
+
 function _validateCapability(capability) {
     if (!_object(capability) || capability.provider !== "codex")
         return false
@@ -97,7 +107,7 @@ function validateModel(model) {
         return false
     if (!_string(model.host.hostId) || !_string(model.host.displayName))
         return false
-    if (!Array.isArray(model.sessions) || !Array.isArray(model.warnings))
+    if (!Array.isArray(model.sessions) || !Array.isArray(model.launchTargets) || !Array.isArray(model.warnings))
         return false
     if (!_validateCapability(model.codexCapability))
         return false
@@ -108,6 +118,13 @@ function validateModel(model) {
         if (!_validateSession(session, model.host.hostId) || identities[session.sessionKey] === true)
             return false
         identities[session.sessionKey] = true
+    }
+    var locations = {}
+    for (var targetIndex = 0; targetIndex < model.launchTargets.length; targetIndex++) {
+        var target = model.launchTargets[targetIndex]
+        if (!_validateLaunchTarget(target) || locations[target.locationId] === true)
+            return false
+        locations[target.locationId] = true
     }
     return true
 }
@@ -251,6 +268,46 @@ function _sessionItem(session, host, now, index) {
     }
 }
 
+function _launchTargetSearchText(target, host) {
+    return [
+        target.projectName,
+        target.locationName,
+        target.projectId,
+        target.locationId,
+        host.displayName,
+        host.hostId,
+        "new codex session"
+    ].filter(function(value) {
+        return typeof value === "string"
+    }).join("\n").toLowerCase()
+}
+
+function _launchTargetItem(target, host, projectTargetCount, index) {
+    var label = target.projectName
+    if (projectTargetCount > 1 && !target.isDefault) {
+        var locationLabel = _string(target.locationName)
+            ? target.locationName
+            : target.locationId.substring(0, 8)
+        label += " — " + locationLabel
+    }
+    var comment = target.isDefault
+        ? "Start a new Codex session in the default project location."
+        : "Start a new Codex session in this configured project location."
+    return {
+        id: "switchboard:new:" + target.projectId + ":" + target.locationId,
+        name: "New Codex — " + label,
+        icon: "material:add_to_terminal",
+        comment: comment,
+        categories: ["Switchboard"],
+        keywords: [target.projectId, target.locationId],
+        _preScored: 4000 - index,
+        _switchboardKind: "new",
+        _projectId: target.projectId,
+        _locationId: target.locationId,
+        _windowHost: host.displayName
+    }
+}
+
 function _statusItem(kind, name, comment, score) {
     return {
         id: "switchboard:status:" + kind,
@@ -361,6 +418,21 @@ function launcherItems(model, query, state) {
     }
 
     var normalizedQuery = String(query || "").trim().toLowerCase()
+    var targetCounts = {}
+    for (var targetCountIndex = 0; targetCountIndex < model.launchTargets.length; targetCountIndex++) {
+        var projectId = model.launchTargets[targetCountIndex].projectId
+        targetCounts[projectId] = (targetCounts[projectId] || 0) + 1
+    }
+    var matchedTargets = []
+    for (var targetIndex = 0; targetIndex < model.launchTargets.length; targetIndex++) {
+        if (!normalizedQuery || _launchTargetSearchText(model.launchTargets[targetIndex], model.host).indexOf(normalizedQuery) !== -1)
+            matchedTargets.push(model.launchTargets[targetIndex])
+    }
+    for (var launchIndex = 0; launchIndex < matchedTargets.length; launchIndex++) {
+        var launchTarget = matchedTargets[launchIndex]
+        result.push(_launchTargetItem(launchTarget, model.host, targetCounts[launchTarget.projectId], launchIndex))
+    }
+
     var sessions = model.sessions.slice().sort(_compareSessions)
     var matched = []
     for (var index = 0; index < sessions.length; index++) {
@@ -370,9 +442,9 @@ function launcherItems(model, query, state) {
     for (var itemIndex = 0; itemIndex < matched.length; itemIndex++)
         result.push(_sessionItem(matched[itemIndex], model.host, now, itemIndex))
 
-    if (model.sessions.length === 0)
-        result.push(_statusItem("empty", "No local Codex sessions", "The validated snapshot contains no Codex sessions.", 3000))
-    else if (matched.length === 0)
-        result.push(_statusItem("no-match", "No matching Switchboard sessions", "Search covers name, path, project, location, host, and session identity.", 3000))
+    if (model.sessions.length === 0 && model.launchTargets.length === 0)
+        result.push(_statusItem("empty", "No local Codex sessions or projects", "The validated snapshot contains no Codex sessions or launch targets.", 3000))
+    else if (matched.length === 0 && matchedTargets.length === 0)
+        result.push(_statusItem("no-match", "No matching Switchboard items", "Search covers sessions, projects, locations, hosts, and stable identities.", 3000))
     return result
 }

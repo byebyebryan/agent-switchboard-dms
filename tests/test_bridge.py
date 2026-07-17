@@ -10,6 +10,7 @@ import unittest
 
 from switchboard_dms.bridge import (
     MAX_BRIDGE_BYTES,
+    prepare_new_argv,
     prepare_open_argv,
     serialize_response,
 )
@@ -24,6 +25,8 @@ SESSION_KEY = (
 )
 REQUEST_ID = "44444444-4444-4444-8444-444444444444"
 SURFACE_ID = "33333333-3333-4333-8333-333333333333"
+PROJECT_ID = "22222222-2222-4222-8222-222222222222"
+LOCATION_ID = "44444444-4444-4444-8444-444444444444"
 
 
 class BridgeCliTests(unittest.TestCase):
@@ -186,6 +189,66 @@ class BridgeCliTests(unittest.TestCase):
                 "swbctl",
                 "prepare-open",
                 SESSION_KEY,
+                "--request-id",
+                REQUEST_ID,
+                "--can-launch-terminal",
+                "--json",
+            ],
+        )
+
+    def test_prepare_new_argv_and_plan_envelope_are_exact(self) -> None:
+        arguments = self.temp / "arguments"
+        executable = self.fixture_executable()
+
+        result = self.run_bridge(
+            executable,
+            "--prepare-new",
+            PROJECT_ID,
+            "--location",
+            LOCATION_ID,
+            "--request-id",
+            REQUEST_ID,
+            environment={
+                "FAKE_ARGUMENTS": str(arguments),
+                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
+            },
+        )
+
+        payload = self.payload(result)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(payload["plan"]["kind"], "switch")
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8"),
+            "\n".join(
+                (
+                    "prepare-new",
+                    "--project",
+                    PROJECT_ID,
+                    "--location",
+                    LOCATION_ID,
+                    "--request-id",
+                    REQUEST_ID,
+                    "--can-focus-desktop",
+                    "--can-launch-terminal",
+                    "--json",
+                )
+            ),
+        )
+        self.assertEqual(
+            prepare_new_argv(
+                "swbctl",
+                project_id=PROJECT_ID,
+                location_id=LOCATION_ID,
+                request_id=REQUEST_ID,
+                can_focus_desktop=False,
+            ),
+            [
+                "swbctl",
+                "prepare-new",
+                "--project",
+                PROJECT_ID,
+                "--location",
+                LOCATION_ID,
                 "--request-id",
                 REQUEST_ID,
                 "--can-launch-terminal",

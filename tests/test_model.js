@@ -48,6 +48,20 @@ function session(overrides = {}) {
     )
 }
 
+function launchTarget(overrides = {}) {
+    return Object.assign(
+        {
+            projectId: "22222222-2222-4222-8222-222222222222",
+            projectName: "routing console",
+            locationId: "44444444-4444-4444-8444-444444444444",
+            locationName: "local checkout",
+            provider: "codex",
+            isDefault: true
+        },
+        overrides
+    )
+}
+
 function model(overrides = {}) {
     return Object.assign(
         {
@@ -61,6 +75,7 @@ function model(overrides = {}) {
                 futureHostField: true
             },
             sessions: [session()],
+            launchTargets: [launchTarget()],
             codexCapability: {
                 provider: "codex",
                 status: "available",
@@ -91,6 +106,10 @@ function state(overrides = {}) {
 
 function sessionItems(items) {
     return items.filter(item => item._switchboardKind === "session")
+}
+
+function newItems(items) {
+    return items.filter(item => item._switchboardKind === "new")
 }
 
 {
@@ -126,6 +145,25 @@ function sessionItems(items) {
     assert.strictEqual(first[0].id.startsWith("switchboard:session:"), true)
     assert.strictEqual(Object.prototype.hasOwnProperty.call(first[0], "action"), false)
     assert.strictEqual(first[0]._windowHost, "snap")
+}
+
+{
+    const secondLocation = launchTarget({
+        locationId: "77777777-7777-4777-8777-777777777777",
+        locationName: "worktree",
+        isDefault: false
+    })
+    const items = newItems(modelApi.launcherItems(
+        model({ launchTargets: [launchTarget(), secondLocation] }),
+        "",
+        state()
+    ))
+    assert.strictEqual(items.length, 2)
+    assert.strictEqual(items[0].name, "New Codex — routing console")
+    assert.strictEqual(items[1].name, "New Codex — routing console — worktree")
+    assert.strictEqual(items[0]._projectId, launchTarget().projectId)
+    assert.strictEqual(items[1]._locationId, secondLocation.locationId)
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(items[0], "_sessionKey"), false)
 }
 
 {
@@ -306,7 +344,7 @@ for (const query of [
 }
 
 {
-    const items = modelApi.launcherItems(model({ sessions: [] }), "", state())
+    const items = modelApi.launcherItems(model({ sessions: [], launchTargets: [] }), "", state())
     assert.strictEqual(items.some(item => item.id === "switchboard:status:empty"), true)
 }
 
@@ -379,6 +417,7 @@ for (const badEnvelope of [
     "not json",
     JSON.stringify({ bridgeVersion: 2, ok: true, model: model() }),
     JSON.stringify({ bridgeVersion: 1, ok: true, model: model({ sessions: [{}] }) }),
+    JSON.stringify({ bridgeVersion: 1, ok: true, model: model({ launchTargets: [{}] }) }),
     JSON.stringify({ bridgeVersion: 1, ok: true, model: model({ sessions: [session({ activity: "idle" })] }) }),
     JSON.stringify({ bridgeVersion: 1, ok: true, model: model({ sessions: [session({ hostId: "99999999-9999-4999-8999-999999999999" })] }) }),
     JSON.stringify({ bridgeVersion: 1, ok: false, error: {} })
@@ -386,4 +425,4 @@ for (const badEnvelope of [
     assert.strictEqual(modelApi.parseBridgeResponse(badEnvelope).ok, false)
 }
 
-console.log("SwitchboardModel.js: 18 deterministic behavior groups passed")
+console.log("SwitchboardModel.js: 19 deterministic behavior groups passed")

@@ -96,8 +96,17 @@ Item {
     }
 
     function executeItem(item) {
-        if (actionActive || !item || item._switchboardKind !== "session" || !item._sessionKey || !item._windowHost)
+        if (actionActive || !item || !item._windowHost)
             return;
+
+        let targetArguments;
+        if (item._switchboardKind === "session" && item._sessionKey) {
+            targetArguments = [item._sessionKey];
+        } else if (item._switchboardKind === "new" && item._projectId && item._locationId) {
+            targetArguments = ["--project", item._projectId, "--location", item._locationId];
+        } else {
+            return;
+        }
 
         actionActive = true;
         actionExpired = false;
@@ -106,7 +115,7 @@ Item {
         actionExitFinished = false;
         actionExitCode = -1;
         actionStdout = "";
-        actionProcess.command = [openerExecutable, "--swbctl", swbctlExecutable, "--terminal", terminalExecutable, "--timeout-ms", String(timeoutMs), "--window-host", item._windowHost, item._sessionKey];
+        actionProcess.command = [openerExecutable, "--swbctl", swbctlExecutable, "--terminal", terminalExecutable, "--timeout-ms", String(timeoutMs), "--window-host", item._windowHost].concat(targetArguments);
         actionDeadline.interval = timeoutMs * 4 + 5000;
         actionDeadline.restart();
         actionProcess.running = true;

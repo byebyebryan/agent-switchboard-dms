@@ -240,7 +240,9 @@ def _blocked_error(plan: Mapping[str, object]) -> DesktopActionError:
 def _prepared_plan(
     *,
     swbctl: str,
-    session_key: str,
+    session_key: str | None,
+    project_id: str | None,
+    location_id: str | None,
     request_id: str,
     timeout_ms: int,
     can_focus_desktop: bool,
@@ -251,6 +253,8 @@ def _prepared_plan(
         timeout_ms=timeout_ms,
         max_sessions=DEFAULT_MAX_SESSIONS,
         prepare_open=session_key,
+        prepare_new=project_id,
+        location_id=location_id,
         request_id=request_id,
         prepare_can_focus_desktop=can_focus_desktop,
         prepare_can_launch_terminal=True,
@@ -305,23 +309,32 @@ def _attach(
     return {"kind": "launched", "surfaceId": surface_id}
 
 
-def open_session(
+def _open_target(
     *,
     swbctl: str,
     terminal: str,
-    session_key: str,
+    session_key: str | None,
+    project_id: str | None,
+    location_id: str | None,
     window_host: str,
     timeout_ms: int,
     request_id: str | None = None,
     which: Callable[[str], str | None] = shutil.which,
     launcher: DetachedLauncher = launch_detached,
 ) -> dict[str, object]:
-    """Prepare and execute one existing local Codex session action."""
+    """Prepare and execute one validated local Codex presentation target."""
+
+    if (session_key is None) == (project_id is None):
+        raise ValueError("exactly one session or project target is required")
+    if (project_id is None) != (location_id is None):
+        raise ValueError("project and location targets must be supplied together")
 
     request = request_id or str(uuid.uuid4())
     plan = _prepared_plan(
         swbctl=swbctl,
         session_key=session_key,
+        project_id=project_id,
+        location_id=location_id,
         request_id=request,
         timeout_ms=timeout_ms,
         can_focus_desktop=True,
@@ -379,6 +392,8 @@ def open_session(
     fallback = _prepared_plan(
         swbctl=swbctl,
         session_key=session_key,
+        project_id=project_id,
+        location_id=location_id,
         request_id=request,
         timeout_ms=timeout_ms,
         can_focus_desktop=False,
@@ -393,6 +408,61 @@ def open_session(
         fallback,
         swbctl=swbctl,
         terminal=terminal,
+        which=which,
+        launcher=launcher,
+    )
+
+
+def open_session(
+    *,
+    swbctl: str,
+    terminal: str,
+    session_key: str,
+    window_host: str,
+    timeout_ms: int,
+    request_id: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    launcher: DetachedLauncher = launch_detached,
+) -> dict[str, object]:
+    """Prepare and execute one existing local Codex session action."""
+
+    return _open_target(
+        swbctl=swbctl,
+        terminal=terminal,
+        session_key=session_key,
+        project_id=None,
+        location_id=None,
+        window_host=window_host,
+        timeout_ms=timeout_ms,
+        request_id=request_id,
+        which=which,
+        launcher=launcher,
+    )
+
+
+def open_project(
+    *,
+    swbctl: str,
+    terminal: str,
+    project_id: str,
+    location_id: str,
+    window_host: str,
+    timeout_ms: int,
+    request_id: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    launcher: DetachedLauncher = launch_detached,
+) -> dict[str, object]:
+    """Prepare and execute one new local Codex project-session action."""
+
+    return _open_target(
+        swbctl=swbctl,
+        terminal=terminal,
+        session_key=None,
+        project_id=project_id,
+        location_id=location_id,
+        window_host=window_host,
+        timeout_ms=timeout_ms,
+        request_id=request_id,
         which=which,
         launcher=launcher,
     )
@@ -464,10 +534,20 @@ def _window_host(value: str) -> str:
         raise argparse.ArgumentTypeError("expected a bounded window host") from error
 
 
+def _uuid(value: str) -> str:
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected a canonical non-nil UUID") from error
+    if parsed.int == 0 or str(parsed) != value:
+        raise argparse.ArgumentTypeError("expected a canonical non-nil UUID")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="switchboard-open",
-        description="Open one validated local Switchboard session plan.",
+        description="Open one validated local Switchboard presentation plan.",
     )
     parser.add_argument("--swbctl", default="swbctl", type=_executable)
     parser.add_argument("--terminal", default="ghostty", type=_executable)
@@ -477,20 +557,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TIMEOUT_MS,
         type=_bounded_integer("--timeout-ms", MIN_TIMEOUT_MS, MAX_TIMEOUT_MS),
     )
-    parser.add_argument("session_key")
+    parser.add_argument("--project", type=_uuid)
+    parser.add_argument("--location", type=_uuid)
+    parser.add_argument("session_key", nargs="?")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if (args.project is None) != (args.location is None):
+        parser.error("--project and --location must be supplied together")
+    if (args.session_key is None) == (args.project is None):
+        parser.error("supply one session key or one project/location pair")
     try:
-        action = open_session(
-            swbctl=args.swbctl,
-            terminal=args.terminal,
-            session_key=args.session_key,
-            window_host=args.window_host,
-            timeout_ms=args.timeout_ms,
-        )
+        if args.session_key is not None:
+            action = open_session(
+                swbctl=args.swbctl,
+                terminal=args.terminal,
+                session_key=args.session_key,
+                window_host=args.window_host,
+                timeout_ms=args.timeout_ms,
+            )
+        else:
+            action = open_project(
+                swbctl=args.swbctl,
+                terminal=args.terminal,
+                project_id=args.project,
+                location_id=args.location,
+                window_host=args.window_host,
+                timeout_ms=args.timeout_ms,
+            )
         response = _success(action)
     except DesktopActionError as error:
         response = _failure(error)
