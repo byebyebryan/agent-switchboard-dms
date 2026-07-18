@@ -2,7 +2,7 @@
 
 var BRIDGE_VERSION = 1
 var ACTION_VERSION = 1
-var MODEL_VERSION = 1
+var MODEL_VERSION = 2
 var MAX_EXECUTABLE_LENGTH = 4096
 
 function boundedExecutable(value, fallback) {
@@ -43,13 +43,13 @@ function _failure(code, message, retryable) {
 }
 
 function _validateSession(session, hostId) {
-    if (!_object(session) || session.provider !== "codex")
+    if (!_object(session) || !_oneOf(session.provider, ["codex", "claude"]))
         return false
     if (!_string(session.sessionKey) || !_string(session.providerSessionId))
         return false
     if (session.hostId !== hostId || !_timestamp(session.recencyAt))
         return false
-    if (session.sessionKey !== hostId + ":codex:" + session.providerSessionId)
+    if (session.sessionKey !== hostId + ":" + session.provider + ":" + session.providerSessionId)
         return false
     if (!_optionalString(session.name) || !_optionalString(session.cwd))
         return false
@@ -84,8 +84,8 @@ function _validateLaunchTarget(target) {
     return typeof target.isDefault === "boolean"
 }
 
-function _validateCapability(capability) {
-    if (!_object(capability) || capability.provider !== "codex")
+function _validateCapability(capability, provider) {
+    if (!_object(capability) || capability.provider !== provider)
         return false
     if (["available", "degraded", "neutral"].indexOf(capability.status) === -1)
         return false
@@ -107,9 +107,9 @@ function validateModel(model) {
         return false
     if (!_string(model.host.hostId) || !_string(model.host.displayName))
         return false
-    if (!Array.isArray(model.sessions) || !Array.isArray(model.launchTargets) || !Array.isArray(model.warnings))
+    if (!Array.isArray(model.sessions) || !Array.isArray(model.launchTargets) || !Array.isArray(model.capabilities) || !Array.isArray(model.warnings))
         return false
-    if (!_validateCapability(model.codexCapability))
+    if (model.capabilities.length !== 2 || !_validateCapability(model.capabilities[0], "codex") || !_validateCapability(model.capabilities[1], "claude"))
         return false
 
     var identities = {}
@@ -199,7 +199,7 @@ function _displayName(session) {
     var directory = _basename(session.cwd)
     if (directory)
         return directory
-    return "Codex " + session.providerSessionId.substring(0, 8)
+    return (session.provider === "claude" ? "Claude " : "Codex ") + session.providerSessionId.substring(0, 8)
 }
 
 function _age(timestamp, now) {
@@ -237,6 +237,7 @@ function _searchText(session, host) {
         session.locationName,
         session.sessionKey,
         session.providerSessionId,
+        session.provider,
         host.displayName,
         host.hostId
     ].filter(function(value) {
@@ -252,6 +253,7 @@ function _sessionItem(session, host, now, index) {
         commentParts.push("project " + session.projectName)
     if (_string(session.locationName))
         commentParts.push("location " + session.locationName)
+    commentParts.push(session.provider === "claude" ? "Claude" : "Codex")
     commentParts.push(_age(session.recencyAt, now))
     commentParts.push(_sourceState(session))
     return {
@@ -320,14 +322,15 @@ function _statusItem(kind, name, comment, score) {
     }
 }
 
-function _degradedComment(model) {
-    var reasons = model.codexCapability.degradedReasons
+function _degradedComment(capability) {
+    var reasons = capability.degradedReasons
     var codes = []
     for (var index = 0; index < reasons.length; index++) {
         if (_object(reasons[index]) && _string(reasons[index].code))
             codes.push(reasons[index].code)
     }
-    return codes.length > 0 ? codes.join(", ") : "The source reported degraded Codex capability."
+    var providerName = capability.provider === "claude" ? "Claude" : "Codex"
+    return codes.length > 0 ? codes.join(", ") : "The source reported degraded " + providerName + " capability."
 }
 
 function isStale(model, now, refreshSeconds) {
@@ -411,10 +414,15 @@ function launcherItems(model, query, state) {
         result.push(_statusItem("stale", "Switchboard snapshot is stale", "Source-authored state is shown without added liveness or activity guesses.", 5000))
     }
 
-    if (model.codexCapability.status === "degraded") {
-        result.push(_statusItem("capability-degraded", "Codex data is degraded", _degradedComment(model), 4900))
-    } else if (model.codexCapability.status === "neutral") {
-        result.push(_statusItem("capability-neutral", "Codex capability is unknown", "The retained snapshot did not report a Codex capability.", 4900))
+    for (var capabilityIndex = 0; capabilityIndex < model.capabilities.length; capabilityIndex++) {
+        var capability = model.capabilities[capabilityIndex]
+        var providerName = capability.provider === "claude" ? "Claude" : "Codex"
+        var statusKind = capability.provider === "codex" ? "capability" : "claude-capability"
+        if (capability.status === "degraded") {
+            result.push(_statusItem(statusKind + "-degraded", providerName + " data is degraded", _degradedComment(capability), 4900 - capabilityIndex))
+        } else if (capability.status === "neutral") {
+            result.push(_statusItem(statusKind + "-neutral", providerName + " capability is unknown", "The retained snapshot did not report a " + providerName + " capability.", 4900 - capabilityIndex))
+        }
     }
 
     var normalizedQuery = String(query || "").trim().toLowerCase()
@@ -443,7 +451,7 @@ function launcherItems(model, query, state) {
         result.push(_sessionItem(matched[itemIndex], model.host, now, itemIndex))
 
     if (model.sessions.length === 0 && model.launchTargets.length === 0)
-        result.push(_statusItem("empty", "No local Codex sessions or projects", "The validated snapshot contains no Codex sessions or launch targets.", 3000))
+        result.push(_statusItem("empty", "No local sessions or projects", "The validated snapshot contains no local sessions or launch targets.", 3000))
     else if (matched.length === 0 && matchedTargets.length === 0)
         result.push(_statusItem("no-match", "No matching Switchboard items", "Search covers sessions, projects, locations, hosts, and stable identities.", 3000))
     return result

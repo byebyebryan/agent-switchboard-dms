@@ -194,6 +194,36 @@ surface. The managed Ghostty window count and matching Codex process count both
 remained one. This completes the Phase 3A live DMS acceptance without claiming
 that every Codex resume emits `SessionStart`.
 
+## Phase 3C known-Claude action evidence
+
+The 2026-07-18 exercise used the installed core wheel, the development DMS
+symlink, an isolated Switchboard registry/tmux server, and a controlled native
+Claude transcript. A structured `UserPromptSubmit` blocker plus an invalid
+loopback API endpoint created that UUID with zero turns and provider-reported
+`total_cost_usd=0`.
+
+Core prepared one waiting Claude surface, waited for a real tmux client, then
+executed the installed Claude binary with the exact `--resume <uuid>` suffix.
+The process inherited `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, and the Claude
+`SessionStart` hook atomically produced one bound launch and one confirmed live
+surface. No Agent View/background daemon was present. Reopening the same stable
+session key reused the only active surface; the registry retained one launch,
+one surface, and one Claude pane.
+
+`switchboard-bridge --refresh` emitted private model v2 with one live Claude
+row, an available Claude capability, and no warnings. `switchboard-open` then
+returned a successful `launched` action, started its transient Ghostty scope,
+and attached a client to that same core surface without creating another Claude
+runtime.
+
+This control shell could connect to the systemd-published niri socket, but that
+socket reported zero windows before and after the Ghostty attach. The exercise
+therefore proves the provider, bridge, desktop-helper launch, and same-surface
+dedup paths; it does not claim live niri focus or same-window dedup. That final
+compositor check remains open. The test-owned Claude process exited cleanly,
+full reconciliation returned the session to stopped, and the isolated state was
+removed.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

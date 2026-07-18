@@ -399,12 +399,12 @@ def _uuid(value: str) -> str:
 
 def _session_key(value: str) -> str:
     parts = value.split(":")
-    if len(parts) != 3 or parts[1] != "codex":
-        raise argparse.ArgumentTypeError("expected a canonical Codex session key")
+    if len(parts) != 3 or parts[1] not in {"codex", "claude"}:
+        raise argparse.ArgumentTypeError("expected a canonical local session key")
     _uuid(parts[0])
     _uuid(parts[2])
     if len(value) > 512:
-        raise argparse.ArgumentTypeError("expected a canonical Codex session key")
+        raise argparse.ArgumentTypeError("expected a canonical local session key")
     return value
 
 

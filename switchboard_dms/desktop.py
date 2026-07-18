@@ -322,7 +322,7 @@ def _open_target(
     which: Callable[[str], str | None] = shutil.which,
     launcher: DetachedLauncher = launch_detached,
 ) -> dict[str, object]:
-    """Prepare and execute one validated local Codex presentation target."""
+    """Prepare and execute one validated local presentation target."""
 
     if (session_key is None) == (project_id is None):
         raise ValueError("exactly one session or project target is required")
@@ -424,7 +424,7 @@ def open_session(
     which: Callable[[str], str | None] = shutil.which,
     launcher: DetachedLauncher = launch_detached,
 ) -> dict[str, object]:
-    """Prepare and execute one existing local Codex session action."""
+    """Prepare and execute one existing local provider session action."""
 
     return _open_target(
         swbctl=swbctl,

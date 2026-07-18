@@ -65,7 +65,7 @@ function launchTarget(overrides = {}) {
 function model(overrides = {}) {
     return Object.assign(
         {
-            modelVersion: 1,
+            modelVersion: 2,
             sourceSchemaVersion: 1,
             sourceProtocolVersion: 1,
             generatedAt: 100000,
@@ -76,13 +76,22 @@ function model(overrides = {}) {
             },
             sessions: [session()],
             launchTargets: [launchTarget()],
-            codexCapability: {
-                provider: "codex",
-                status: "available",
-                available: true,
-                features: [],
-                degradedReasons: []
-            },
+            capabilities: [
+                {
+                    provider: "codex",
+                    status: "available",
+                    available: true,
+                    features: [],
+                    degradedReasons: []
+                },
+                {
+                    provider: "claude",
+                    status: "neutral",
+                    available: null,
+                    features: [],
+                    degradedReasons: []
+                }
+            ],
             warnings: [],
             diagnosticTruncation: {},
             truncation: {},
@@ -198,10 +207,25 @@ for (const query of [
     "routing console",
     "local checkout",
     "11111111-1111-4111-8111-111111111111:codex:55555555-5555-4555-8555-555555555555",
+    "codex",
     "snap"
 ]) {
     const items = sessionItems(modelApi.launcherItems(model(), query, state()))
     assert.strictEqual(items.length, 1, `query did not match: ${query}`)
+}
+
+{
+    const claude = session({
+        sessionKey: "11111111-1111-4111-8111-111111111111:claude:77777777-7777-4777-8777-777777777777",
+        provider: "claude",
+        providerSessionId: "77777777-7777-4777-8777-777777777777",
+        name: null
+    })
+    const items = sessionItems(modelApi.launcherItems(model({ sessions: [claude] }), "claude", state()))
+    assert.strictEqual(items.length, 1)
+    assert.strictEqual(items[0].name, "routing console")
+    assert.strictEqual(items[0]._sessionKey, claude.sessionKey)
+    assert.match(items[0].comment, /Claude/)
 }
 
 {
@@ -350,13 +374,22 @@ for (const query of [
 
 {
     const degraded = model({
-        codexCapability: {
-            provider: "codex",
-            status: "degraded",
-            available: false,
-            features: [],
-            degradedReasons: [{ code: "provider_probe_failed", retryable: true }]
-        }
+        capabilities: [
+            {
+                provider: "codex",
+                status: "degraded",
+                available: false,
+                features: [],
+                degradedReasons: [{ code: "provider_probe_failed", retryable: true }]
+            },
+            {
+                provider: "claude",
+                status: "neutral",
+                available: null,
+                features: [],
+                degradedReasons: []
+            }
+        ]
     })
     const items = modelApi.launcherItems(degraded, "", state())
     assert.strictEqual(items[0].id, "switchboard:status:capability-degraded")
@@ -371,17 +404,50 @@ for (const query of [
             activity: "unknown",
             attachment: "unknown"
         })],
-        codexCapability: {
-            provider: "codex",
-            status: "neutral",
-            available: null,
-            features: [],
-            degradedReasons: []
-        }
+        capabilities: [
+            {
+                provider: "codex",
+                status: "neutral",
+                available: null,
+                features: [],
+                degradedReasons: []
+            },
+            {
+                provider: "claude",
+                status: "neutral",
+                available: null,
+                features: [],
+                degradedReasons: []
+            }
+        ]
     })
     const items = modelApi.launcherItems(neutral, "", state())
     assert.strictEqual(items[0].id, "switchboard:status:capability-neutral")
     assert.match(sessionItems(items)[0].comment, /state unknown/)
+}
+
+{
+    const degraded = model({
+        capabilities: [
+            {
+                provider: "codex",
+                status: "available",
+                available: true,
+                features: [],
+                degradedReasons: []
+            },
+            {
+                provider: "claude",
+                status: "degraded",
+                available: false,
+                features: [],
+                degradedReasons: [{ code: "agent_view_enabled", retryable: false }]
+            }
+        ]
+    })
+    const items = modelApi.launcherItems(degraded, "", state())
+    assert.strictEqual(items[0].id, "switchboard:status:claude-capability-degraded")
+    assert.strictEqual(items[0].name, "Claude data is degraded")
 }
 
 {
@@ -425,4 +491,4 @@ for (const badEnvelope of [
     assert.strictEqual(modelApi.parseBridgeResponse(badEnvelope).ok, false)
 }
 
-console.log("SwitchboardModel.js: 19 deterministic behavior groups passed")
+console.log("SwitchboardModel.js: 21 deterministic behavior groups passed")

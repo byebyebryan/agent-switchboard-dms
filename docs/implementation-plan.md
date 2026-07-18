@@ -181,19 +181,21 @@ provider-identity grace after attachment; a second no-write turn completed
 without hook errors. The adapter never bypassed Codex's provider-owned trust
 boundary.
 
-Phase 2B follows with Claude hooks, Agent-View-disabled capability checks,
-process/tmux liveness, and normalized foreground runtime truth. During Phase
-2B this adapter continues validating the complete provider-neutral Snapshot v1
-envelope while deliberately projecting only Codex sessions,
-capability/errors, and launch targets. A mixed-provider fixture regression
-must prove Claude rows do not fail the bridge or manufacture Claude items,
-warnings, or actions. No QML or desktop-action change belongs to that
-compatibility gate.
+Core Phase 2B is complete: Snapshot v1 now carries hook-known Claude sessions,
+Agent-View-disabled capability checks, process/tmux liveness, and normalized
+foreground runtime truth.
 
-Phase 3C then adds core-authored Claude session and native-history presentation
-plans using the same managed-tmux lifecycle as Codex. The legacy
-`agentSessions` plugin remains the Claude and remote fallback until those paths
-pass equivalent live validation.
+The first Phase 3C increment advances the adapter's private frontend model to
+version 2. It projects bounded local Codex and Claude session rows, one ordered
+capability record per provider, and provider-attributed warnings. A canonical
+Claude session key follows the existing asynchronous `prepare-open` and
+focus/switch/attach path without exposing provider argv or tmux locators to
+DMS. Codex project launch targets remain unchanged.
+
+New Claude sessions, the native history-picker action, graceful managed-runtime
+stop, and remote hosts remain later increments. The legacy `agentSessions`
+plugin remains the remote and untouched Claude-history fallback until those
+paths pass equivalent live validation.
 
 ## Final audit and local handoff
 
@@ -202,7 +204,8 @@ pass equivalent live validation.
 - Make small local commits with clear messages only after review.
 - Do not push; leave remote publication to an explicit later instruction.
 
-Claude, SSH, provider hooks/liveness, arbitrary working-directory launch,
-project-catalog editing, direct tmux locator or provider-launch logic,
-non-niri/non-Ghostty adapters, chezmoi cutover, and a rich widget remain
-non-goals. The legacy plugin remains the Claude and remote fallback.
+New Claude sessions, native Claude history picking, graceful managed-runtime
+stop, SSH, arbitrary working-directory launch, project-catalog editing, direct
+tmux locator or provider-launch logic, non-niri/non-Ghostty adapters, chezmoi
+cutover, and a rich widget remain non-goals for this increment. The legacy
+plugin remains the remote and Claude-history fallback.

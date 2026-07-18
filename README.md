@@ -1,7 +1,8 @@
 # Switchboard for DMS
 
-Switchboard is a DankMaterialShell (DMS) launcher integration for starting,
-browsing, and opening local Codex sessions from Agent Switchboard. The QML launcher
+Switchboard is a DankMaterialShell (DMS) launcher integration for starting new
+local Codex sessions and browsing or opening known local Codex and Claude Code
+sessions from Agent Switchboard. The QML launcher
 returns filtered rows from an in-memory last-good cache while persistent DMS
 `Process` instances run repository-owned snapshot and action helpers
 asynchronously. Selecting a configured project location starts a new Codex
@@ -70,10 +71,11 @@ Request a full refresh with:
 ./switchboard-bridge --refresh
 ```
 
-Open one canonical local Codex session key with:
+Open one canonical local Codex or Claude session key with:
 
 ```sh
 ./switchboard-open --window-host HOST-DISPLAY-NAME HOST-ID:codex:SESSION-UUID
+# or HOST-ID:claude:SESSION-UUID
 ```
 
 Start one new Codex session from canonical configured IDs with:

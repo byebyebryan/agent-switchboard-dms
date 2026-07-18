@@ -24,6 +24,7 @@ PLAN_FIXTURE = ROOT / "tests" / "fixtures" / "presentation-plan-v1.json"
 SESSION_KEY = (
     "11111111-1111-4111-8111-111111111111:codex:22222222-2222-4222-8222-222222222222"
 )
+CLAUDE_SESSION_KEY = SESSION_KEY.replace(":codex:", ":claude:")
 REQUEST_ID = "44444444-4444-4444-8444-444444444444"
 SURFACE_ID = "33333333-3333-4333-8333-333333333333"
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
@@ -197,6 +198,30 @@ class BridgeCliTests(unittest.TestCase):
             ],
         )
 
+    def test_prepare_open_accepts_and_preserves_a_claude_session_key(self) -> None:
+        arguments = self.temp / "arguments"
+        executable = self.fixture_executable()
+
+        result = self.run_bridge(
+            executable,
+            "--prepare-open",
+            CLAUDE_SESSION_KEY,
+            "--request-id",
+            REQUEST_ID,
+            environment={
+                "FAKE_ARGUMENTS": str(arguments),
+                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
+            },
+        )
+
+        payload = self.payload(result)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(payload["plan"]["kind"], "switch")
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8").splitlines()[:2],
+            ["prepare-open", CLAUDE_SESSION_KEY],
+        )
+
     def test_prepare_new_argv_and_plan_envelope_are_exact(self) -> None:
         arguments = self.temp / "arguments"
         executable = self.fixture_executable()
@@ -324,10 +349,14 @@ class BridgeCliTests(unittest.TestCase):
         self.assertEqual(payload["bridgeVersion"], 1)
         self.assertIs(payload["ok"], True)
         model = payload["model"]
-        self.assertEqual(model["modelVersion"], 1)
+        self.assertEqual(model["modelVersion"], 2)
         self.assertEqual(len(model["sessions"]), 1)
+        self.assertEqual(
+            [capability["provider"] for capability in model["capabilities"]],
+            ["codex", "claude"],
+        )
 
-    def test_mixed_provider_fixture_has_exact_codex_only_bridge_model(self) -> None:
+    def test_mixed_provider_fixture_projects_claude_sessions_and_truth(self) -> None:
         executable = self.fixture_executable()
         baseline = self.payload(
             self.run_bridge(
@@ -342,7 +371,15 @@ class BridgeCliTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(mixed, baseline)
+        self.assertEqual(len(baseline["model"]["sessions"]), 1)
+        model = mixed["model"]
+        self.assertEqual(len(model["sessions"]), 2)
+        self.assertEqual(
+            {session["provider"] for session in model["sessions"]},
+            {"codex", "claude"},
+        )
+        self.assertEqual(model["capabilities"][1]["status"], "degraded")
+        self.assertEqual(model["warnings"][0]["provider"], "claude")
 
     def test_entry_point_is_0755_and_works_outside_repo_via_path_or_symlink(
         self,
@@ -413,7 +450,7 @@ class BridgeCliTests(unittest.TestCase):
                 payload = self.payload(result)
                 self.assertEqual(result.returncode, 0)
                 self.assertIs(payload["ok"], True)
-                self.assertEqual(payload["model"]["codexCapability"]["status"], status)
+                self.assertEqual(payload["model"]["capabilities"][0]["status"], status)
 
     def assert_error(
         self,
@@ -761,7 +798,6 @@ class RuntimeBoundaryTests(unittest.TestCase):
             "niri",
             "ghostty",
             "codex app-server",
-            "claude",
             "shell=true",
             "shlex",
         ):

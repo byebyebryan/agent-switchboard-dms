@@ -64,13 +64,15 @@ contain no JSON or a partial record because the output channel failed.
 Success exits `0`:
 
 ```json
-{"bridgeVersion":1,"model":{"modelVersion":1},"ok":true}
+{"bridgeVersion":1,"model":{"modelVersion":2},"ok":true}
 ```
 
 `model` is the complete output of the bounded Snapshot v1 projection described
-in `switchboard_dms.protocol`. Provider degradation is data: a valid degraded
-or neutral snapshot remains `ok: true`, with capability state and warnings in
-the model.
+in `switchboard_dms.protocol`. Model v2 projects local Codex and Claude session
+rows, an ordered capability record for each provider, and provider-attributed
+warnings. Codex project launch targets remain Codex-only. Provider degradation
+is data: a valid degraded or neutral snapshot remains `ok: true`, with
+capability state and warnings in the model.
 
 A prepared action returns the independently validated public plan:
 
@@ -151,9 +153,10 @@ are `focused`, `switched`, or `launched`, each with one stable surface ID.
 Failure uses the same bounded `{code,message,retryable}` display shape. The
 helper's stdout is one compact newline-terminated JSON object no larger than 16
 KiB; stderr is ignored by QML. It accepts one `--swbctl` token, one `--terminal`
-token, a bounded `--window-host`, the shared timeout, and one canonical session
-key or canonical project and location IDs. It never accepts cwd, raw tmux
-locators, provider argv, desktop tokens, or niri window IDs from QML.
+token, a bounded `--window-host`, the shared timeout, and either one canonical
+Codex or Claude session key or canonical Codex project and location IDs. It
+never accepts cwd, raw tmux locators, provider argv, desktop tokens, or niri
+window IDs from QML.
 
 ## Reviewed contract provenance
 

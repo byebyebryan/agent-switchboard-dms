@@ -1161,7 +1161,7 @@ def _project_session(
     return {
         "sessionKey": session["sessionKey"],
         "hostId": session["hostId"],
-        "provider": "codex",
+        "provider": session["provider"],
         "providerSessionId": session["providerSessionId"],
         "projectId": session.get("projectId"),
         "projectName": None if project is None else project["name"],
@@ -1237,14 +1237,15 @@ def _project_launch_targets(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _adapt_capability(
     capabilities: list[dict[str, Any]],
+    provider: str,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     capability = next(
-        (item for item in capabilities if item["provider"] == "codex"), None
+        (item for item in capabilities if item["provider"] == provider), None
     )
     if capability is None:
         return (
             {
-                "provider": "codex",
+                "provider": provider,
                 "status": "neutral",
                 "available": None,
                 "features": [],
@@ -1305,28 +1306,30 @@ def _adapt_capability(
 def _relevant_error(error: dict[str, Any]) -> bool:
     provider = error.get("provider")
     if provider is not None:
-        return provider == "codex"
+        return provider in _PROVIDERS
     session_key = error.get("sessionKey")
     if session_key is not None:
-        return _session_key(session_key, "model.error.sessionKey")[2] == "codex"
+        return _session_key(session_key, "model.error.sessionKey")[2] in _PROVIDERS
     return True
 
 
 def _diagnostics(
-    capability: dict[str, Any],
+    capabilities: tuple[dict[str, Any], ...],
     errors: list[dict[str, Any]],
-    truncation: dict[str, dict[str, Any]],
+    capability_truncation: dict[str, dict[str, dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     candidates: list[dict[str, Any]] = []
-    for reason in capability["degradedReasons"]:
-        warning: dict[str, Any] = {
-            "source": "capability",
-            "code": reason["code"],
-            "retryable": reason["retryable"],
-        }
-        if "feature" in reason:
-            warning["feature"] = reason["feature"]
-        candidates.append(warning)
+    for capability in capabilities:
+        for reason in capability["degradedReasons"]:
+            warning: dict[str, Any] = {
+                "source": "capability",
+                "provider": capability["provider"],
+                "code": reason["code"],
+                "retryable": reason["retryable"],
+            }
+            if "feature" in reason:
+                warning["feature"] = reason["feature"]
+            candidates.append(warning)
     relevant_errors = [error for error in errors if _relevant_error(error)]
     for error in relevant_errors[:MAX_MODEL_ERRORS]:
         warning = deepcopy(error)
@@ -1339,7 +1342,14 @@ def _diagnostics(
     )
     emitted_errors = sum(warning["source"] == "error" for warning in warnings)
     diagnostic_truncation = {
-        **deepcopy(truncation),
+        "codexFeatures": deepcopy(capability_truncation["codex"]["features"]),
+        "codexDegradedReasons": deepcopy(
+            capability_truncation["codex"]["degradedReasons"]
+        ),
+        "claudeFeatures": deepcopy(capability_truncation["claude"]["features"]),
+        "claudeDegradedReasons": deepcopy(
+            capability_truncation["claude"]["degradedReasons"]
+        ),
         "errors": _truncation_summary(
             source_count=len(relevant_errors),
             emitted_count=emitted_errors,
@@ -1348,7 +1358,11 @@ def _diagnostics(
         ),
         "warnings": _truncation_summary(
             source_count=(
-                truncation["degradedReasons"]["sourceCount"] + len(relevant_errors)
+                sum(
+                    capability_truncation[provider]["degradedReasons"]["sourceCount"]
+                    for provider in ("codex", "claude")
+                )
+                + len(relevant_errors)
             ),
             emitted_count=len(warnings),
             limit=MAX_MODEL_WARNINGS - 3,
@@ -1486,12 +1500,12 @@ def _validate_model_session(value: object, path: str, host_id: str) -> None:
     if (
         record_host != host_id
         or key_host != host_id
-        or provider != "codex"
-        or key_provider != "codex"
+        or provider not in _PROVIDERS
+        or key_provider != provider
         or provider_session_id != key_provider_id
     ):
-        raise ProtocolError(f"{path} is not a canonical Codex identity")
-    if session_key != f"{host_id}:codex:{provider_session_id}":
+        raise ProtocolError(f"{path} is not a canonical provider identity")
+    if session_key != f"{host_id}:{provider}:{provider_session_id}":
         raise ProtocolError(f"{path}.sessionKey identity fields disagree")
 
     _nullable_uuid(table["projectId"], f"{path}.projectId")
@@ -1588,8 +1602,9 @@ def _validate_model_degradation(value: object, path: str) -> None:
         _details(table["details"], f"{path}.details")
 
 
-def _validate_model_capability(value: object) -> dict[str, Any]:
-    path = "model.codexCapability"
+def _validate_model_capability(
+    value: object, path: str, expected_provider: str
+) -> dict[str, Any]:
     table = _exact_object(
         value,
         path,
@@ -1600,8 +1615,8 @@ def _validate_model_capability(value: object) -> dict[str, Any]:
             {"testedContractRange", "providerVersion", "schemaFingerprint"}
         ),
     )
-    if table["provider"] != "codex":
-        raise ProtocolError(f"{path}.provider must be codex")
+    if table["provider"] != expected_provider:
+        raise ProtocolError(f"{path}.provider must be {expected_provider}")
     status = _enum(
         table["status"],
         f"{path}.status",
@@ -1717,15 +1732,15 @@ def _validate_error_warning(value: object, path: str, host_id: str) -> None:
         and _canonical_uuid(table["hostId"], f"{path}.hostId") != host_id
     ):
         raise ProtocolError(f"{path}.hostId belongs to another host")
-    if "provider" in table and table["provider"] != "codex":
-        raise ProtocolError(f"{path}.provider must be codex")
+    if "provider" in table and table["provider"] not in _PROVIDERS:
+        raise ProtocolError(f"{path}.provider is unsupported")
     if "sessionKey" in table:
         _, key_host, key_provider, _ = _canonical_session_key(
             table["sessionKey"], f"{path}.sessionKey"
         )
-        if key_host != host_id or key_provider != "codex":
+        if key_host != host_id or key_provider not in _PROVIDERS:
             raise ProtocolError(
-                f"{path}.sessionKey is not a Codex identity on this host"
+                f"{path}.sessionKey is not a supported identity on this host"
             )
     if "details" in table:
         _details(table["details"], f"{path}.details")
@@ -1735,21 +1750,23 @@ def _validate_model_warnings(
     warnings: list[Any],
     *,
     host_id: str,
-    capability: dict[str, Any],
+    capabilities: tuple[dict[str, Any], ...],
     diagnostic_truncation: dict[str, dict[str, Any]],
     session_truncation: dict[str, Any],
     launch_target_truncation: dict[str, Any],
 ) -> None:
     expected_capability_warnings: list[dict[str, Any]] = []
-    for reason in capability["degradedReasons"]:
-        warning: dict[str, Any] = {
-            "source": "capability",
-            "code": reason["code"],
-            "retryable": reason["retryable"],
-        }
-        if "feature" in reason:
-            warning["feature"] = reason["feature"]
-        expected_capability_warnings.append(warning)
+    for capability in capabilities:
+        for reason in capability["degradedReasons"]:
+            warning: dict[str, Any] = {
+                "source": "capability",
+                "provider": capability["provider"],
+                "code": reason["code"],
+                "retryable": reason["retryable"],
+            }
+            if "feature" in reason:
+                warning["feature"] = reason["feature"]
+            expected_capability_warnings.append(warning)
 
     capability_warnings: list[dict[str, Any]] = []
     error_count = 0
@@ -1765,10 +1782,12 @@ def _validate_model_warnings(
             table = _exact_object(
                 table,
                 path,
-                required=frozenset({"source", "code", "retryable"}),
+                required=frozenset({"source", "provider", "code", "retryable"}),
                 optional=frozenset({"feature"}),
             )
             _string(table["code"], f"{path}.code", maximum=128)
+            if table["provider"] not in _PROVIDERS:
+                raise ProtocolError(f"{path}.provider is unsupported")
             _boolean(table["retryable"], f"{path}.retryable")
             if "feature" in table:
                 _string(table["feature"], f"{path}.feature", maximum=256)
@@ -1791,19 +1810,28 @@ def _validate_model_warnings(
         raise ProtocolError("model contains too many error warnings")
 
     summaries = diagnostic_truncation
-    if summaries["features"]["emittedCount"] != len(capability["features"]):
-        raise ProtocolError("model feature truncation count is inconsistent")
-    if summaries["degradedReasons"]["emittedCount"] != len(
-        capability["degradedReasons"]
-    ):
-        raise ProtocolError("model degradation truncation count is inconsistent")
+    capabilities_by_provider = {
+        capability["provider"]: capability for capability in capabilities
+    }
+    for provider in ("codex", "claude"):
+        capability = capabilities_by_provider[provider]
+        if summaries[f"{provider}Features"]["emittedCount"] != len(
+            capability["features"]
+        ):
+            raise ProtocolError("model feature truncation count is inconsistent")
+        if summaries[f"{provider}DegradedReasons"]["emittedCount"] != len(
+            capability["degradedReasons"]
+        ):
+            raise ProtocolError("model degradation truncation count is inconsistent")
     if summaries["errors"]["emittedCount"] != error_count:
         raise ProtocolError("model error truncation count is inconsistent")
     core_warning_count = len(capability_warnings) + error_count
     if summaries["warnings"]["emittedCount"] != core_warning_count:
         raise ProtocolError("model warning truncation count is inconsistent")
     if summaries["warnings"]["sourceCount"] != (
-        summaries["degradedReasons"]["sourceCount"] + summaries["errors"]["sourceCount"]
+        summaries["codexDegradedReasons"]["sourceCount"]
+        + summaries["claudeDegradedReasons"]["sourceCount"]
+        + summaries["errors"]["sourceCount"]
     ):
         raise ProtocolError("model warning source count is inconsistent")
 
@@ -1866,7 +1894,7 @@ def _validate_snapshot_model(value: object) -> None:
                 "host",
                 "sessions",
                 "launchTargets",
-                "codexCapability",
+                "capabilities",
                 "warnings",
                 "diagnosticTruncation",
                 "truncation",
@@ -1875,7 +1903,7 @@ def _validate_snapshot_model(value: object) -> None:
         ),
     )
     for key, expected in (
-        ("modelVersion", 1),
+        ("modelVersion", 2),
         ("sourceSchemaVersion", SCHEMA_VERSION),
         ("sourceProtocolVersion", PROTOCOL_VERSION),
     ):
@@ -1917,28 +1945,57 @@ def _validate_snapshot_model(value: object) -> None:
         MAX_MODEL_LAUNCH_TARGET_BYTES,
     )
 
-    capability = _validate_model_capability(table["codexCapability"])
+    raw_capabilities = _array(
+        table["capabilities"], f"{path}.capabilities", maximum=len(_PROVIDERS)
+    )
+    if len(raw_capabilities) != len(_PROVIDERS):
+        raise ProtocolError("model.capabilities must contain both local providers")
+    capabilities = tuple(
+        _validate_model_capability(
+            capability,
+            f"{path}.capabilities[{index}]",
+            provider,
+        )
+        for index, (capability, provider) in enumerate(
+            zip(raw_capabilities, ("codex", "claude"), strict=True)
+        )
+    )
     warnings = _array(table["warnings"], f"{path}.warnings", maximum=MAX_MODEL_WARNINGS)
     _validate_encoded_limit(warnings, f"{path}.warnings", MAX_MODEL_WARNING_BYTES)
 
     diagnostic_table = _exact_object(
         table["diagnosticTruncation"],
         f"{path}.diagnosticTruncation",
-        required=frozenset({"features", "degradedReasons", "errors", "warnings"}),
+        required=frozenset(
+            {
+                "codexFeatures",
+                "codexDegradedReasons",
+                "claudeFeatures",
+                "claudeDegradedReasons",
+                "errors",
+                "warnings",
+            }
+        ),
     )
     diagnostic_truncation = {
-        "features": _validate_truncation_summary(
-            diagnostic_table["features"],
-            f"{path}.diagnosticTruncation.features",
-            expected_limit=MAX_MODEL_FEATURES,
-            expected_byte_limit=MAX_MODEL_FEATURE_BYTES,
-        ),
-        "degradedReasons": _validate_truncation_summary(
-            diagnostic_table["degradedReasons"],
-            f"{path}.diagnosticTruncation.degradedReasons",
-            expected_limit=MAX_MODEL_DEGRADED_REASONS,
-            expected_byte_limit=MAX_MODEL_DEGRADED_REASON_BYTES,
-        ),
+        **{
+            f"{provider}{kind}": _validate_truncation_summary(
+                diagnostic_table[f"{provider}{kind}"],
+                f"{path}.diagnosticTruncation.{provider}{kind}",
+                expected_limit=(
+                    MAX_MODEL_FEATURES
+                    if kind == "Features"
+                    else MAX_MODEL_DEGRADED_REASONS
+                ),
+                expected_byte_limit=(
+                    MAX_MODEL_FEATURE_BYTES
+                    if kind == "Features"
+                    else MAX_MODEL_DEGRADED_REASON_BYTES
+                ),
+            )
+            for provider in ("codex", "claude")
+            for kind in ("Features", "DegradedReasons")
+        },
         "errors": _validate_truncation_summary(
             diagnostic_table["errors"],
             f"{path}.diagnosticTruncation.errors",
@@ -1954,13 +2011,15 @@ def _validate_snapshot_model(value: object) -> None:
             maximum_source_count=MAX_JSON_ARRAY_ITEMS * 2,
         ),
     }
-    if capability["available"] is None:
-        for name in ("features", "degradedReasons"):
-            summary = diagnostic_truncation[name]
-            if summary["sourceCount"] != 0 or summary["emittedCount"] != 0:
-                raise ProtocolError(
-                    "model neutral capability cannot claim source diagnostics"
-                )
+    for capability in capabilities:
+        if capability["available"] is None:
+            provider = capability["provider"]
+            for kind in ("Features", "DegradedReasons"):
+                summary = diagnostic_truncation[f"{provider}{kind}"]
+                if summary["sourceCount"] != 0 or summary["emittedCount"] != 0:
+                    raise ProtocolError(
+                        "model neutral capability cannot claim source diagnostics"
+                    )
 
     truncation_table = _object(table["truncation"], f"{path}.truncation")
     session_limit = _integer(
@@ -1988,7 +2047,7 @@ def _validate_snapshot_model(value: object) -> None:
     _validate_model_warnings(
         warnings,
         host_id=host_id,
-        capability=capability,
+        capabilities=capabilities,
         diagnostic_truncation=diagnostic_truncation,
         session_truncation=session_truncation,
         launch_target_truncation=launch_target_truncation,
@@ -2003,13 +2062,13 @@ def _model_collection(value: object, path: str) -> list[Any]:
 
 @dataclass(slots=True)
 class SnapshotModel:
-    """Small, deterministic, Codex-only model safe for a DMS bridge."""
+    """Small, deterministic local-provider model safe for a DMS bridge."""
 
     generated_at: int
     host: dict[str, Any]
     sessions: tuple[dict[str, Any], ...]
     launch_targets: tuple[dict[str, Any], ...]
-    codex_capability: dict[str, Any]
+    capabilities: tuple[dict[str, Any], ...]
     warnings: tuple[dict[str, Any], ...]
     diagnostic_truncation: dict[str, dict[str, Any]]
     source_session_count: int
@@ -2023,6 +2082,14 @@ class SnapshotModel:
     @property
     def launch_targets_truncated(self) -> bool:
         return len(self.launch_targets) < self.source_launch_target_count
+
+    @property
+    def codex_capability(self) -> dict[str, Any]:
+        return self.capabilities[0]
+
+    @property
+    def claude_capability(self) -> dict[str, Any]:
+        return self.capabilities[1]
 
     def to_dict(self) -> dict[str, Any]:
         session_truncation = _truncation_summary(
@@ -2038,7 +2105,7 @@ class SnapshotModel:
             byte_limit=MAX_MODEL_LAUNCH_TARGET_BYTES,
         )
         value: dict[str, Any] = {
-            "modelVersion": 1,
+            "modelVersion": 2,
             "sourceSchemaVersion": SCHEMA_VERSION,
             "sourceProtocolVersion": PROTOCOL_VERSION,
             "generatedAt": self.generated_at,
@@ -2047,7 +2114,7 @@ class SnapshotModel:
             "launchTargets": _model_collection(
                 self.launch_targets, "model.launchTargets"
             ),
-            "codexCapability": deepcopy(self.codex_capability),
+            "capabilities": _model_collection(self.capabilities, "model.capabilities"),
             "warnings": _model_collection(self.warnings, "model.warnings"),
             "diagnosticTruncation": deepcopy(self.diagnostic_truncation),
             "truncation": session_truncation,
@@ -2095,9 +2162,17 @@ def _build_model(
     source_launch_target_count: int,
     limit: int,
 ) -> SnapshotModel:
-    capability, capability_truncation = _adapt_capability(snapshot["capabilities"])
+    adapted = tuple(
+        _adapt_capability(snapshot["capabilities"], provider)
+        for provider in ("codex", "claude")
+    )
+    capabilities = tuple(item[0] for item in adapted)
+    capability_truncation = {
+        provider: adapted[index][1]
+        for index, provider in enumerate(("codex", "claude"))
+    }
     warnings, diagnostic_truncation = _diagnostics(
-        capability, snapshot["errors"], capability_truncation
+        capabilities, snapshot["errors"], capability_truncation
     )
     if len(sessions) < source_count:
         warnings.append(
@@ -2134,7 +2209,7 @@ def _build_model(
         host=deepcopy(snapshot["host"]),
         sessions=tuple(deepcopy(sessions)),
         launch_targets=tuple(deepcopy(launch_targets)),
-        codex_capability=capability,
+        capabilities=capabilities,
         warnings=tuple(warnings),
         diagnostic_truncation=diagnostic_truncation,
         source_session_count=source_count,
@@ -2146,7 +2221,7 @@ def _build_model(
 def parse_snapshot(
     raw: str | bytes | bytearray, *, max_sessions: int = MAX_MODEL_SESSIONS
 ) -> SnapshotModel:
-    """Validate Snapshot v1 and project a bounded deterministic Codex model."""
+    """Validate Snapshot v1 and project a bounded deterministic local model."""
 
     if (
         isinstance(max_sessions, bool)
@@ -2160,7 +2235,7 @@ def parse_snapshot(
     projected = [
         _project_session(session, projects, locations)
         for session in snapshot["sessions"]
-        if session["provider"] == "codex"
+        if session["provider"] in _PROVIDERS
     ]
     projected.sort(key=lambda session: (-session["recencyAt"], session["sessionKey"]))
     source_count = len(projected)

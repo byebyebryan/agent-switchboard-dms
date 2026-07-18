@@ -104,21 +104,25 @@ manifest's `settings_read`, `settings_write`, and `process` permissions are the
 complete permission set required by this behavior.
 
 State presentation remains honest. Missing observations and stale data are
-unknown; the UI does not infer liveness or activity. The bridge turns an empty
-`capabilities` array into a neutral Codex capability, which the launcher renders
-as unknown rather than unavailable. Session rows display source-authored
-activity, runtime presence, resumability, and attachment values. The bridge also
-projects only declared local project locations whose configured provider and
-transport resolve to Codex and tmux. Launch targets contain stable IDs and
-bounded display fields, never paths or provider argv. Session and launch-target
-selection always runs asynchronously through the validated action helper.
+unknown; the UI does not infer liveness or activity. The bridge turns an absent
+provider capability into a neutral Codex or Claude capability, which the
+launcher renders as unknown rather than unavailable. Session rows display
+source-authored activity, runtime presence, resumability, and attachment
+values. The bridge also projects only declared local project locations whose
+configured provider and transport resolve to Codex and tmux.
+Launch targets contain stable IDs and bounded display fields, never paths or
+provider argv.
+Session and launch-target selection always runs asynchronously through the
+validated action helper.
 Structured action failures become the current failure item; a success schedules
 a full snapshot refresh.
 
 The bridge remains the authoritative full Snapshot and projected-model
-validator. The pure `SwitchboardModel.js` consumer additionally validates the
-versioned envelope, required display shape, Codex identity coherence, and state
-enums while accepting unknown forward-compatible fields. It projects stable
+validator. Its private model v2 projects both local Codex and Claude session
+rows and exactly one ordered capability record for each provider. The pure
+`SwitchboardModel.js` consumer additionally validates the versioned envelope,
+required display shape, provider identity coherence, and state enums while
+accepting unknown forward-compatible fields. It projects stable
 item IDs from session, project, and location identities; orders sessions by
 recency and launch targets canonically; and searches name, path, project,
 location, host, and stable identity.
@@ -133,7 +137,7 @@ promise live in-place updates.
 
 This repository does not currently provide:
 
-- Claude support
+- new Claude session or native Claude history-picker actions
 - SSH support or remote-host orchestration
 - provider hooks or liveness inference
 - arbitrary working-directory launch or project-catalog editing
@@ -144,5 +148,5 @@ This repository does not currently provide:
 
 It also does not recreate provider, tmux, SSH, compositor, terminal, or config
 management logic inside QML. The separate legacy `agentSessions` plugin remains
-available for Claude and remote behavior; this integration neither disables
-nor modifies it.
+available for remote behavior and untouched Claude-history fallback; this
+integration neither disables nor modifies it.

@@ -202,7 +202,7 @@ class DocumentationContractTests(unittest.TestCase):
             "`Qt.callLater`",
             "last-good snapshot",
             "Missing observations and stale data",
-            "neutral Codex capability",
+            "neutral Codex or Claude capability",
             "Launch targets contain stable IDs",
             "does not connect that signal",
             "reopened or the query changes",
@@ -215,7 +215,7 @@ class DocumentationContractTests(unittest.TestCase):
         for non_goal in (
             "Claude",
             "SSH",
-            "provider hooks/liveness",
+            "provider hooks or liveness inference",
             "arbitrary working-directory launch",
             "project-catalog editing",
             "direct tmux locator",

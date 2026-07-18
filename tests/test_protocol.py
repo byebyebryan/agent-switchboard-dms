@@ -121,6 +121,8 @@ class SnapshotProjectionTests(unittest.TestCase):
         self.assertEqual(session["activity"], "working")
         self.assertEqual(session["recencyAt"], session["lastObservedAt"])
         self.assertEqual(model.codex_capability["status"], "available")
+        self.assertEqual(model.claude_capability["status"], "neutral")
+        self.assertEqual(model.to_dict()["modelVersion"], 2)
         self.assertEqual(
             model.launch_targets,
             (
@@ -227,6 +229,8 @@ class SnapshotProjectionTests(unittest.TestCase):
 
         self.assertEqual(model.codex_capability["status"], "neutral")
         self.assertIsNone(model.codex_capability["available"])
+        self.assertEqual(model.claude_capability["status"], "neutral")
+        self.assertIsNone(model.claude_capability["available"])
         self.assertEqual(model.warnings, ())
 
     def test_degraded_codex_capability_and_error_become_warnings(self) -> None:
@@ -264,6 +268,7 @@ class SnapshotProjectionTests(unittest.TestCase):
         self.assertTrue(
             all(warning["code"] == "provider_not_found" for warning in model.warnings)
         )
+        self.assertEqual(model.warnings[0]["provider"], "codex")
 
     def test_sessions_are_recency_sorted_and_structurally_truncated(self) -> None:
         value = fixture()
@@ -296,7 +301,7 @@ class SnapshotProjectionTests(unittest.TestCase):
         self.assertEqual(warning["code"], "model_sessions_truncated")
         self.assertEqual(warning["details"], {"emittedCount": 2, "retainedCount": 4})
 
-    def test_non_codex_sessions_are_validated_but_not_projected(self) -> None:
+    def test_claude_sessions_are_validated_and_projected(self) -> None:
         value = fixture()
         claude = cloned_session(8, recency=1_784_142_003_000)
         claude["provider"] = "claude"
@@ -307,19 +312,30 @@ class SnapshotProjectionTests(unittest.TestCase):
 
         model = parse_snapshot(encode(value))
 
-        self.assertEqual(len(model.sessions), 1)
-        self.assertEqual(model.sessions[0]["provider"], "codex")
-        self.assertEqual(model.source_session_count, 1)
+        self.assertEqual(len(model.sessions), 2)
+        self.assertEqual(
+            [session["provider"] for session in model.sessions], ["claude", "codex"]
+        )
+        self.assertEqual(model.source_session_count, 2)
 
-    def test_mixed_provider_fixture_preserves_exact_codex_projection(self) -> None:
+    def test_mixed_provider_fixture_projects_both_provider_contracts(self) -> None:
         baseline = parse_snapshot(FIXTURE.read_bytes())
         mixed = parse_snapshot(MIXED_FIXTURE.read_bytes())
 
-        self.assertEqual(mixed.to_dict(), baseline.to_dict())
-        self.assertEqual(len(mixed.sessions), 1)
-        self.assertEqual(mixed.sessions[0]["provider"], "codex")
+        self.assertEqual(len(mixed.sessions), 2)
+        self.assertEqual(
+            {session["provider"] for session in mixed.sessions}, {"codex", "claude"}
+        )
         self.assertEqual(mixed.codex_capability["provider"], "codex")
-        self.assertEqual(mixed.warnings, baseline.warnings)
+        self.assertEqual(mixed.claude_capability["provider"], "claude")
+        self.assertEqual(mixed.claude_capability["status"], "degraded")
+        self.assertEqual(
+            [
+                (warning["source"], warning.get("provider"))
+                for warning in mixed.warnings
+            ],
+            [("capability", "claude"), ("error", "claude")],
+        )
         self.assertEqual(mixed.launch_targets, baseline.launch_targets)
 
     def test_equivalent_uuid_spelling_is_canonicalized_across_references(self) -> None:
@@ -393,7 +409,7 @@ class SnapshotProjectionTests(unittest.TestCase):
             len(model.codex_capability["degradedReasons"]),
             MAX_MODEL_DEGRADED_REASONS,
         )
-        for name in ("features", "degradedReasons", "errors", "warnings"):
+        for name in ("codexFeatures", "codexDegradedReasons", "errors", "warnings"):
             self.assertTrue(model.diagnostic_truncation[name]["truncated"])
         self.assertLessEqual(len(model.warnings), MAX_MODEL_WARNINGS)
         self.assertIn(
@@ -490,7 +506,7 @@ class SnapshotModelMutationTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 model = parse_snapshot(FIXTURE.read_bytes())
-                model.diagnostic_truncation["features"][field] = value
+                model.diagnostic_truncation["codexFeatures"][field] = value
                 self.assert_serializers_reject(
                     model, "integer|count|limit|inconsistent"
                 )
@@ -557,6 +573,7 @@ class SnapshotModelMutationTests(unittest.TestCase):
         model.warnings = tuple(
             {
                 "source": "capability",
+                "provider": "codex",
                 "code": f"warning_{index}",
                 "retryable": False,
             }
@@ -610,12 +627,12 @@ class SnapshotModelMutationTests(unittest.TestCase):
         neutral = fixture()
         neutral["capabilities"] = []
         model = parse_snapshot(encode(neutral))
-        feature_summary = model.diagnostic_truncation["features"]
+        feature_summary = model.diagnostic_truncation["codexFeatures"]
         feature_summary.update(sourceCount=1, truncated=True)
         self.set_diagnostic_warning(model)
         self.assert_serializers_reject(model, "cannot omit every|neutral")
 
-        for name in ("degradedReasons", "errors"):
+        for name in ("codexDegradedReasons", "errors"):
             with self.subTest(name=name):
                 model = parse_snapshot(FIXTURE.read_bytes())
                 summary = model.diagnostic_truncation[name]
