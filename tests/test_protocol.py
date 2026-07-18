@@ -105,7 +105,7 @@ class PresentationPlanTests(unittest.TestCase):
 
 
 class SnapshotProjectionTests(unittest.TestCase):
-    def test_fixture_projects_one_bounded_codex_model(self) -> None:
+    def test_fixture_projects_bounded_local_provider_model(self) -> None:
         model = parse_snapshot(FIXTURE.read_bytes())
 
         self.assertIsInstance(model, SnapshotModel)
@@ -134,13 +134,21 @@ class SnapshotProjectionTests(unittest.TestCase):
                     "provider": "codex",
                     "isDefault": True,
                 },
+                {
+                    "projectId": "22222222-2222-4222-8222-222222222222",
+                    "projectName": "example",
+                    "locationId": "44444444-4444-4444-8444-444444444444",
+                    "locationName": None,
+                    "provider": "claude",
+                    "isDefault": True,
+                },
             ),
         )
         self.assertNotIn("path", model.launch_targets[0])
         self.assertFalse(model.truncated)
         self.assertLessEqual(len(model.to_json().encode("utf-8")), 8 * 1024 * 1024)
 
-    def test_launch_targets_require_declared_codex_tmux_resolution(self) -> None:
+    def test_launch_targets_require_declared_tmux_locations(self) -> None:
         value = fixture()
         value["locations"].extend(
             [
@@ -167,10 +175,18 @@ class SnapshotProjectionTests(unittest.TestCase):
 
         model = parse_snapshot(encode(value))
 
-        self.assertEqual(len(model.launch_targets), 1)
+        self.assertEqual(len(model.launch_targets), 4)
         self.assertEqual(
-            model.launch_targets[0]["locationId"],
-            "44444444-4444-4444-8444-444444444444",
+            {
+                (target["provider"], target["locationId"])
+                for target in model.launch_targets
+            },
+            {
+                ("codex", "44444444-4444-4444-8444-444444444444"),
+                ("claude", "44444444-4444-4444-8444-444444444444"),
+                ("codex", "77777777-7777-4777-8777-777777777777"),
+                ("claude", "77777777-7777-4777-8777-777777777777"),
+            },
         )
 
     def test_launch_targets_are_structurally_truncated_with_an_honest_warning(
@@ -192,14 +208,17 @@ class SnapshotProjectionTests(unittest.TestCase):
 
         self.assertEqual(len(model.launch_targets), MAX_MODEL_LAUNCH_TARGETS)
         self.assertTrue(model.launch_targets_truncated)
-        self.assertEqual(model.source_launch_target_count, MAX_MODEL_LAUNCH_TARGETS + 1)
+        self.assertEqual(
+            model.source_launch_target_count,
+            2 * (MAX_MODEL_LAUNCH_TARGETS + 1),
+        )
         warning = model.warnings[-1]
         self.assertEqual(warning["code"], "model_launch_targets_truncated")
         self.assertEqual(
             warning["details"],
             {
                 "emittedCount": MAX_MODEL_LAUNCH_TARGETS,
-                "retainedCount": MAX_MODEL_LAUNCH_TARGETS + 1,
+                "retainedCount": 2 * (MAX_MODEL_LAUNCH_TARGETS + 1),
             },
         )
 

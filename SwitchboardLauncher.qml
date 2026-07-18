@@ -102,8 +102,8 @@ Item {
         let targetArguments;
         if (item._switchboardKind === "session" && item._sessionKey) {
             targetArguments = [item._sessionKey];
-        } else if (item._switchboardKind === "new" && item._projectId && item._locationId) {
-            targetArguments = ["--project", item._projectId, "--location", item._locationId];
+        } else if (item._switchboardKind === "new" && item._projectId && item._locationId && item._provider) {
+            targetArguments = ["--project", item._projectId, "--location", item._locationId, "--provider", item._provider];
         } else {
             return;
         }

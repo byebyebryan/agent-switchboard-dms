@@ -73,6 +73,8 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("openerExecutable", execute_path)
         self.assertIn('"--window-host"', execute_path)
         self.assertIn("item._sessionKey", execute_path)
+        self.assertIn("item._provider", execute_path)
+        self.assertIn('"--provider"', execute_path)
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
 
     def test_settings_use_verified_dms_components(self):
@@ -184,7 +186,7 @@ class DocumentationContractTests(unittest.TestCase):
             "swbctl list --json",
             "swbctl list --refresh --json",
             "swbctl prepare-open <session-key> --request-id <uuid> --json",
-            "swbctl prepare-new --project <project-id> --location <location-id> --request-id <uuid> --json",
+            "swbctl prepare-new --project <project-id> --location <location-id> --provider <provider> --request-id <uuid> --json",
             "swbctl select-surface <surface-id> --client <tmux-client-id>",
             "swbctl attach-surface <surface-id>",
         )
@@ -213,7 +215,7 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_non_goals_are_explicit(self):
         for non_goal in (
-            "Claude",
+            "native Claude history-picker",
             "SSH",
             "provider hooks or liveness inference",
             "arbitrary working-directory launch",

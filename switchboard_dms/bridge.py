@@ -81,6 +81,7 @@ def prepare_new_argv(
     *,
     project_id: str,
     location_id: str,
+    provider: str,
     request_id: str,
     can_focus_desktop: bool = True,
     can_launch_terminal: bool = True,
@@ -92,6 +93,8 @@ def prepare_new_argv(
         project_id,
         "--location",
         location_id,
+        "--provider",
+        provider,
         "--request-id",
         request_id,
     ]
@@ -195,6 +198,7 @@ def run_bridge(
     prepare_open: str | None = None,
     prepare_new: str | None = None,
     location_id: str | None = None,
+    provider: str | None = None,
     request_id: str | None = None,
     prepare_can_focus_desktop: bool = True,
     prepare_can_launch_terminal: bool = True,
@@ -213,11 +217,16 @@ def run_bridge(
                     can_launch_terminal=prepare_can_launch_terminal,
                 )
             else:
-                assert prepare_new is not None and location_id is not None
+                assert (
+                    prepare_new is not None
+                    and location_id is not None
+                    and provider is not None
+                )
                 argv = prepare_new_argv(
                     executable,
                     project_id=prepare_new,
                     location_id=location_id,
+                    provider=provider,
                     request_id=request_id,
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
@@ -430,6 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
     actions.add_argument("--prepare-new", type=_uuid)
     actions.add_argument("--select-surface", type=_uuid)
     parser.add_argument("--location", type=_uuid)
+    parser.add_argument("--provider", choices=("codex", "claude"))
     parser.add_argument("--request-id", type=_uuid)
     parser.add_argument("--tmux-client", type=_tmux_client)
     parser.add_argument(
@@ -475,8 +485,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     preparing = args.prepare_open is not None or args.prepare_new is not None
     if preparing != (args.request_id is not None):
         parser.error("a prepare action and --request-id must be supplied together")
-    if (args.prepare_new is None) != (args.location is None):
-        parser.error("--prepare-new and --location must be supplied together")
+    new_arguments = (args.prepare_new, args.location, args.provider)
+    if any(value is not None for value in new_arguments) and not all(
+        value is not None for value in new_arguments
+    ):
+        parser.error(
+            "--prepare-new, --location, and --provider must be supplied together"
+        )
     if (args.select_surface is None) != (args.tmux_client is None):
         parser.error("--select-surface and --tmux-client must be supplied together")
     if (preparing or args.select_surface is not None) and args.refresh:
@@ -490,6 +505,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             prepare_open=args.prepare_open,
             prepare_new=args.prepare_new,
             location_id=args.location,
+            provider=args.provider,
             request_id=args.request_id,
             select_surface=args.select_surface,
             tmux_client=args.tmux_client,

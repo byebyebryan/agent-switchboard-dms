@@ -157,7 +157,7 @@ Codex runtime; the final evidence is recorded in
 
 ## Roadmap handoff
 
-This repository's existing-local-Codex action slice is complete. Phase 3B adds
+This repository's existing-local-Codex action slice is complete. Phase 3B added
 the implementation for project-aware new local Codex sessions: the bridge
 projects bounded launch targets, invokes core `prepare-new` with stable
 project/location IDs, and reuses the validated focus/switch/attach path. Live
@@ -185,17 +185,26 @@ Core Phase 2B is complete: Snapshot v1 now carries hook-known Claude sessions,
 Agent-View-disabled capability checks, process/tmux liveness, and normalized
 foreground runtime truth.
 
-The first Phase 3C increment advances the adapter's private frontend model to
+The first Phase 3C increment advanced the adapter's private frontend model to
 version 2. It projects bounded local Codex and Claude session rows, one ordered
 capability record per provider, and provider-attributed warnings. A canonical
 Claude session key follows the existing asynchronous `prepare-open` and
 focus/switch/attach path without exposing provider argv or tmux locators to
-DMS. Codex project launch targets remain unchanged.
+DMS.
 
-New Claude sessions, the native history-picker action, graceful managed-runtime
-stop, and remote hosts remain later increments. The legacy `agentSessions`
-plugin remains the remote and untouched Claude-history fallback until those
-paths pass equivalent live validation.
+The second Phase 3C increment projects distinct Codex and Claude launch targets
+for every declared local tmux location. QML carries only project, location, and
+provider identities; the bridge invokes core `prepare-new --provider`, and the
+desktop helper reuses the existing validated focus/switch/attach path. Core
+continues to own provider argv, cwd, tmux, leases, and hook binding. Live Claude
+start/bind/reopen acceptance passed against the installed core and retained DMS
+bridge with no prompt or model turn; the evidence is recorded in
+[`docs/live-integration.md`](live-integration.md).
+
+The native history-picker action, graceful managed-runtime stop, and remote
+hosts remain later increments. The legacy `agentSessions` plugin remains the
+remote and untouched Claude-history fallback until those paths pass equivalent
+live validation.
 
 ## Final audit and local handoff
 
@@ -204,8 +213,8 @@ paths pass equivalent live validation.
 - Make small local commits with clear messages only after review.
 - Do not push; leave remote publication to an explicit later instruction.
 
-New Claude sessions, native Claude history picking, graceful managed-runtime
-stop, SSH, arbitrary working-directory launch, project-catalog editing, direct
+Native Claude history picking, graceful managed-runtime stop, SSH, arbitrary
+working-directory launch, project-catalog editing, direct
 tmux locator or provider-launch logic, non-niri/non-Ghostty adapters, chezmoi
 cutover, and a rich widget remain non-goals for this increment. The legacy
 plugin remains the remote and Claude-history fallback.

@@ -23,7 +23,8 @@ full reconciliation behind that public boundary.
     --prepare-open SESSION-KEY --request-id UUID
     [--timeout-ms MILLISECONDS]
 ./switchboard-bridge [--swbctl EXECUTABLE]
-    --prepare-new PROJECT-ID --location LOCATION-ID --request-id UUID
+    --prepare-new PROJECT-ID --location LOCATION-ID --provider codex|claude
+    --request-id UUID
     [--timeout-ms MILLISECONDS]
 ./switchboard-bridge [--swbctl EXECUTABLE]
     --select-surface SURFACE-ID --tmux-client CLIENT-ID
@@ -43,8 +44,9 @@ full reconciliation behind that public boundary.
   "--request-id", UUID, "--can-focus-desktop", "--can-launch-terminal",
   "--json"]`.
 - New-session preparation uses exactly `[EXECUTABLE, "prepare-new",
-  "--project", PROJECT_ID, "--location", LOCATION_ID, "--request-id", UUID,
-  "--can-focus-desktop", "--can-launch-terminal", "--json"]`.
+  "--project", PROJECT_ID, "--location", LOCATION_ID, "--provider", PROVIDER,
+  "--request-id", UUID, "--can-focus-desktop", "--can-launch-terminal",
+  "--json"]`.
 - Selection uses exactly `[EXECUTABLE, "select-surface", SURFACE_ID,
   "--client", CLIENT_ID]` and requires empty stdout on success.
 
@@ -70,9 +72,9 @@ Success exits `0`:
 `model` is the complete output of the bounded Snapshot v1 projection described
 in `switchboard_dms.protocol`. Model v2 projects local Codex and Claude session
 rows, an ordered capability record for each provider, and provider-attributed
-warnings. Codex project launch targets remain Codex-only. Provider degradation
-is data: a valid degraded or neutral snapshot remains `ok: true`, with
-capability state and warnings in the model.
+warnings. Every declared local tmux location produces distinct Codex and Claude
+launch targets. Provider degradation is data: a valid degraded or neutral
+snapshot remains `ok: true`, with capability state and warnings in the model.
 
 A prepared action returns the independently validated public plan:
 
@@ -147,16 +149,17 @@ after a complete exit-zero success envelope passes frontend model validation.
 
 ## Desktop action envelope
 
-`switchboard-open` accepts either one session key or one project/location pair
-and emits a separate `actionVersion: 1` envelope. Success kinds
-are `focused`, `switched`, or `launched`, each with one stable surface ID.
+`switchboard-open` accepts either one session key or one
+project/location/provider target and emits a separate `actionVersion: 1`
+envelope. Success kinds are `focused`, `switched`, or `launched`, each with one
+stable surface ID.
 Failure uses the same bounded `{code,message,retryable}` display shape. The
 helper's stdout is one compact newline-terminated JSON object no larger than 16
 KiB; stderr is ignored by QML. It accepts one `--swbctl` token, one `--terminal`
 token, a bounded `--window-host`, the shared timeout, and either one canonical
-Codex or Claude session key or canonical Codex project and location IDs. It
-never accepts cwd, raw tmux locators, provider argv, desktop tokens, or niri
-window IDs from QML.
+Codex or Claude session key or canonical project and location IDs plus the
+bounded provider enum. It never accepts cwd, raw tmux locators, provider argv,
+desktop tokens, or niri window IDs from QML.
 
 ## Reviewed contract provenance
 

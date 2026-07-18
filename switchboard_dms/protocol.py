@@ -1199,11 +1199,12 @@ def _launch_target_sort_key(target: dict[str, Any]) -> tuple[object, ...]:
         "" if location_name is None else str(location_name).casefold(),
         "" if location_name is None else location_name,
         target["locationId"],
+        0 if target["provider"] == "codex" else 1,
     )
 
 
 def _project_launch_targets(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    """Project only config-resolved local Codex/tmux launch identities."""
+    """Project explicit local provider choices for declared tmux locations."""
 
     projects = {
         project["projectId"]: project
@@ -1217,20 +1218,20 @@ def _project_launch_targets(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         project = projects.get(location["projectId"])
         if project is None:
             continue
-        provider = location.get("providerOverride") or project.get("defaultProvider")
         transport = location.get("transportOverride") or project.get("defaultTransport")
-        if provider != "codex" or transport != "tmux":
+        if transport != "tmux":
             continue
-        targets.append(
-            {
-                "projectId": project["projectId"],
-                "projectName": project["name"],
-                "locationId": location["locationId"],
-                "locationName": location.get("displayName"),
-                "provider": "codex",
-                "isDefault": location.get("isDefault", False),
-            }
-        )
+        for provider in ("codex", "claude"):
+            targets.append(
+                {
+                    "projectId": project["projectId"],
+                    "projectName": project["name"],
+                    "locationId": location["locationId"],
+                    "locationName": location.get("displayName"),
+                    "provider": provider,
+                    "isDefault": location.get("isDefault", False),
+                }
+            )
     targets.sort(key=_launch_target_sort_key)
     return targets
 
@@ -1580,8 +1581,8 @@ def _validate_model_launch_target(value: object, path: str) -> dict[str, Any]:
     _string(table["projectName"], f"{path}.projectName", maximum=256)
     _canonical_uuid(table["locationId"], f"{path}.locationId")
     _nullable_string(table["locationName"], f"{path}.locationName", maximum=256)
-    if table["provider"] != "codex":
-        raise ProtocolError(f"{path}.provider must be codex")
+    if table["provider"] not in _PROVIDERS:
+        raise ProtocolError(f"{path}.provider is unsupported")
     _boolean(table["isDefault"], f"{path}.isDefault")
     return table
 
@@ -1934,9 +1935,11 @@ def _validate_snapshot_model(value: object) -> None:
         _validate_model_launch_target(target, f"{path}.launchTargets[{index}]")
         for index, target in enumerate(launch_targets)
     ]
-    location_ids = [target["locationId"] for target in validated_targets]
-    if len(location_ids) != len(set(location_ids)):
-        raise ProtocolError("model.launchTargets contains duplicate locationId values")
+    provider_locations = [
+        (target["provider"], target["locationId"]) for target in validated_targets
+    ]
+    if len(provider_locations) != len(set(provider_locations)):
+        raise ProtocolError("model.launchTargets contains duplicate provider locations")
     if launch_targets != sorted(validated_targets, key=_launch_target_sort_key):
         raise ProtocolError("model.launchTargets are not in canonical order")
     _validate_encoded_limit(

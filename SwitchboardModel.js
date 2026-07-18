@@ -75,7 +75,7 @@ function _validateSession(session, hostId) {
 }
 
 function _validateLaunchTarget(target) {
-    if (!_object(target) || target.provider !== "codex")
+    if (!_object(target) || !_oneOf(target.provider, ["codex", "claude"]))
         return false
     if (!_string(target.projectId) || !_string(target.projectName))
         return false
@@ -276,15 +276,17 @@ function _launchTargetSearchText(target, host) {
         target.locationName,
         target.projectId,
         target.locationId,
+        target.provider,
         host.displayName,
         host.hostId,
-        "new codex session"
+        "new " + target.provider + " session"
     ].filter(function(value) {
         return typeof value === "string"
     }).join("\n").toLowerCase()
 }
 
 function _launchTargetItem(target, host, projectTargetCount, index) {
+    var providerName = target.provider === "claude" ? "Claude" : "Codex"
     var label = target.projectName
     if (projectTargetCount > 1 && !target.isDefault) {
         var locationLabel = _string(target.locationName)
@@ -293,19 +295,20 @@ function _launchTargetItem(target, host, projectTargetCount, index) {
         label += " — " + locationLabel
     }
     var comment = target.isDefault
-        ? "Start a new Codex session in the default project location."
-        : "Start a new Codex session in this configured project location."
+        ? "Start a new " + providerName + " session in the default project location."
+        : "Start a new " + providerName + " session in this configured project location."
     return {
-        id: "switchboard:new:" + target.projectId + ":" + target.locationId,
-        name: "New Codex — " + label,
+        id: "switchboard:new:" + target.provider + ":" + target.projectId + ":" + target.locationId,
+        name: "New " + providerName + " — " + label,
         icon: "material:add_to_terminal",
         comment: comment,
         categories: ["Switchboard"],
-        keywords: [target.projectId, target.locationId],
+        keywords: [target.projectId, target.locationId, target.provider],
         _preScored: 4000 - index,
         _switchboardKind: "new",
         _projectId: target.projectId,
         _locationId: target.locationId,
+        _provider: target.provider,
         _windowHost: host.displayName
     }
 }

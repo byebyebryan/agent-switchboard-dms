@@ -243,6 +243,7 @@ def _prepared_plan(
     session_key: str | None,
     project_id: str | None,
     location_id: str | None,
+    provider: str | None,
     request_id: str,
     timeout_ms: int,
     can_focus_desktop: bool,
@@ -255,6 +256,7 @@ def _prepared_plan(
         prepare_open=session_key,
         prepare_new=project_id,
         location_id=location_id,
+        provider=provider,
         request_id=request_id,
         prepare_can_focus_desktop=can_focus_desktop,
         prepare_can_launch_terminal=True,
@@ -316,6 +318,7 @@ def _open_target(
     session_key: str | None,
     project_id: str | None,
     location_id: str | None,
+    provider: str | None,
     window_host: str,
     timeout_ms: int,
     request_id: str | None = None,
@@ -326,8 +329,13 @@ def _open_target(
 
     if (session_key is None) == (project_id is None):
         raise ValueError("exactly one session or project target is required")
-    if (project_id is None) != (location_id is None):
-        raise ValueError("project and location targets must be supplied together")
+    project_arguments = (project_id, location_id, provider)
+    if any(value is not None for value in project_arguments) and not all(
+        value is not None for value in project_arguments
+    ):
+        raise ValueError(
+            "project, location, and provider targets must be supplied together"
+        )
 
     request = request_id or str(uuid.uuid4())
     plan = _prepared_plan(
@@ -335,6 +343,7 @@ def _open_target(
         session_key=session_key,
         project_id=project_id,
         location_id=location_id,
+        provider=provider,
         request_id=request,
         timeout_ms=timeout_ms,
         can_focus_desktop=True,
@@ -394,6 +403,7 @@ def _open_target(
         session_key=session_key,
         project_id=project_id,
         location_id=location_id,
+        provider=provider,
         request_id=request,
         timeout_ms=timeout_ms,
         can_focus_desktop=False,
@@ -432,6 +442,7 @@ def open_session(
         session_key=session_key,
         project_id=None,
         location_id=None,
+        provider=None,
         window_host=window_host,
         timeout_ms=timeout_ms,
         request_id=request_id,
@@ -446,13 +457,14 @@ def open_project(
     terminal: str,
     project_id: str,
     location_id: str,
+    provider: str,
     window_host: str,
     timeout_ms: int,
     request_id: str | None = None,
     which: Callable[[str], str | None] = shutil.which,
     launcher: DetachedLauncher = launch_detached,
 ) -> dict[str, object]:
-    """Prepare and execute one new local Codex project-session action."""
+    """Prepare and execute one new local provider project-session action."""
 
     return _open_target(
         swbctl=swbctl,
@@ -460,6 +472,7 @@ def open_project(
         session_key=None,
         project_id=project_id,
         location_id=location_id,
+        provider=provider,
         window_host=window_host,
         timeout_ms=timeout_ms,
         request_id=request_id,
@@ -559,6 +572,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--project", type=_uuid)
     parser.add_argument("--location", type=_uuid)
+    parser.add_argument("--provider", choices=("codex", "claude"))
     parser.add_argument("session_key", nargs="?")
     return parser
 
@@ -566,10 +580,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if (args.project is None) != (args.location is None):
-        parser.error("--project and --location must be supplied together")
+    project_arguments = (args.project, args.location, args.provider)
+    if any(value is not None for value in project_arguments) and not all(
+        value is not None for value in project_arguments
+    ):
+        parser.error("--project, --location, and --provider must be supplied together")
     if (args.session_key is None) == (args.project is None):
-        parser.error("supply one session key or one project/location pair")
+        parser.error("supply one session key or one project/location/provider target")
     try:
         if args.session_key is not None:
             action = open_session(
@@ -585,6 +602,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 terminal=args.terminal,
                 project_id=args.project,
                 location_id=args.location,
+                provider=args.provider,
                 window_host=args.window_host,
                 timeout_ms=args.timeout_ms,
             )

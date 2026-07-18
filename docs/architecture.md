@@ -15,7 +15,7 @@ The only accepted CLI commands are:
 - `swbctl list --json`
 - `swbctl list --refresh --json`
 - `swbctl prepare-open <session-key> --request-id <uuid> --json`
-- `swbctl prepare-new --project <project-id> --location <location-id> --request-id <uuid> --json`
+- `swbctl prepare-new --project <project-id> --location <location-id> --provider <provider> --request-id <uuid> --json`
 - `swbctl select-surface <surface-id> --client <tmux-client-id>`
 - `swbctl attach-surface <surface-id>`
 
@@ -53,8 +53,8 @@ versioned contract is in
 
 The repository-owned `switchboard-open` executable is the QML presentation
 adapter. It accepts either one canonical session key or one canonical
-project/location pair, generates one request UUID, asks the same validated
-bridge layer for a plan, and performs only the advertised operation:
+project/location/provider target, generates one request UUID, asks the same
+validated bridge layer for a plan, and performs only the advertised operation:
 
 1. `focus` matches a niri window by a SHA-256-derived Wayland application ID.
    An adopted pre-Switchboard pane can instead match the exact tmux workspace
@@ -108,10 +108,10 @@ unknown; the UI does not infer liveness or activity. The bridge turns an absent
 provider capability into a neutral Codex or Claude capability, which the
 launcher renders as unknown rather than unavailable. Session rows display
 source-authored activity, runtime presence, resumability, and attachment
-values. The bridge also projects only declared local project locations whose
-configured provider and transport resolve to Codex and tmux.
-Launch targets contain stable IDs and bounded display fields, never paths or
-provider argv.
+values. For every declared local tmux location, the bridge projects one explicit
+Codex target and one explicit Claude target. Launch targets contain stable IDs,
+the bounded provider enum, and bounded display fields, never paths or provider
+argv.
 Session and launch-target selection always runs asynchronously through the
 validated action helper.
 Structured action failures become the current failure item; a success schedules
@@ -137,7 +137,7 @@ promise live in-place updates.
 
 This repository does not currently provide:
 
-- new Claude session or native Claude history-picker actions
+- native Claude history-picker or graceful-stop actions
 - SSH support or remote-host orchestration
 - provider hooks or liveness inference
 - arbitrary working-directory launch or project-catalog editing

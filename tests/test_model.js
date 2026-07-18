@@ -162,17 +162,28 @@ function newItems(items) {
         locationName: "worktree",
         isDefault: false
     })
+    const claude = launchTarget({ provider: "claude" })
     const items = newItems(modelApi.launcherItems(
-        model({ launchTargets: [launchTarget(), secondLocation] }),
+        model({ launchTargets: [launchTarget(), claude, secondLocation] }),
         "",
         state()
     ))
-    assert.strictEqual(items.length, 2)
+    assert.strictEqual(items.length, 3)
     assert.strictEqual(items[0].name, "New Codex — routing console")
-    assert.strictEqual(items[1].name, "New Codex — routing console — worktree")
+    assert.strictEqual(items[1].name, "New Claude — routing console")
+    assert.strictEqual(items[2].name, "New Codex — routing console — worktree")
     assert.strictEqual(items[0]._projectId, launchTarget().projectId)
-    assert.strictEqual(items[1]._locationId, secondLocation.locationId)
+    assert.strictEqual(items[1]._provider, "claude")
+    assert.strictEqual(items[2]._locationId, secondLocation.locationId)
+    assert.notStrictEqual(items[0].id, items[1].id)
     assert.strictEqual(Object.prototype.hasOwnProperty.call(items[0], "_sessionKey"), false)
+    const claudeItems = newItems(modelApi.launcherItems(
+        model({ launchTargets: [launchTarget(), claude] }),
+        "claude",
+        state()
+    ))
+    assert.strictEqual(claudeItems.length, 1)
+    assert.strictEqual(claudeItems[0]._provider, "claude")
 }
 
 {

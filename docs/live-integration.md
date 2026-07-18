@@ -224,6 +224,29 @@ compositor check remains open. The test-owned Claude process exited cleanly,
 full reconciliation returned the session to stopped, and the isolated state was
 removed.
 
+## Phase 3C new-Claude action evidence
+
+The 2026-07-18 new-session exercise used the installed core wheel, the retained
+development bridge, isolated Switchboard state, and a dedicated tmux server.
+Core reserved one unbound Claude surface and did not execute the provider until
+a real client attached. The resulting process ran plain `claude`, inherited
+`CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, and emitted a provider-assigned UUID through
+the installed `SessionStart` hook.
+
+The hook bound that UUID to the expected launch, project, location, and surface
+with confirmed live runtime evidence. Reopening the canonical session key
+returned a focus plan for the same surface, synchronized the UUID into tmux
+metadata, and retained the same test-owned process. The bridge then emitted
+model v2 with one live confirmed Claude row, explicit Codex and Claude launch
+targets, and no warnings.
+
+No prompt was submitted and no model turn was requested. `/exit` stopped only
+the test-owned Claude process; full reconciliation reported the UUID stopped and
+resumable, the dedicated tmux server exited, and the empty test transcript was
+moved to the desktop trash. The pre-existing active Claude session remained
+alive throughout. This exercise did not launch Ghostty, so live niri focus and
+same-window dedup remain the compositor acceptance item described above.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

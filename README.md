@@ -1,11 +1,11 @@
 # Switchboard for DMS
 
 Switchboard is a DankMaterialShell (DMS) launcher integration for starting new
-local Codex sessions and browsing or opening known local Codex and Claude Code
+local Codex or Claude Code sessions and browsing or opening known local
 sessions from Agent Switchboard. The QML launcher
 returns filtered rows from an in-memory last-good cache while persistent DMS
 `Process` instances run repository-owned snapshot and action helpers
-asynchronously. Selecting a configured project location starts a new Codex
+asynchronously. Selecting a configured project/provider location starts a new
 session; selecting a retained session reopens it. Both consume a validated
 PresentationPlan v1 and either focus an existing niri window or open Ghostty
 onto a core-owned tmux surface.
@@ -78,15 +78,16 @@ Open one canonical local Codex or Claude session key with:
 # or HOST-ID:claude:SESSION-UUID
 ```
 
-Start one new Codex session from canonical configured IDs with:
+Start one new Codex or Claude session from canonical configured IDs with:
 
 ```sh
 ./switchboard-open --window-host HOST-DISPLAY-NAME \
-  --project PROJECT-UUID --location LOCATION-UUID
+  --project PROJECT-UUID --location LOCATION-UUID --provider codex
+# or --provider claude
 ```
 
 The helper generates one request ID. If focus fails, it reuses that ID while
-requesting an attach plan, so retries cannot reserve or start another Codex
+requesting an attach plan, so retries cannot reserve or start another provider
 runtime.
 
 Managed bridge runs keep stderr empty and, while stdout remains writable, emit
