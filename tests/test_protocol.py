@@ -27,6 +27,7 @@ from switchboard_dms.protocol import (
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "snapshot-v1.json"
+MIXED_FIXTURE = Path(__file__).parent / "fixtures" / "snapshot-v1-mixed.json"
 PLAN_FIXTURE = Path(__file__).parent / "fixtures" / "presentation-plan-v1.json"
 
 
@@ -309,6 +310,17 @@ class SnapshotProjectionTests(unittest.TestCase):
         self.assertEqual(len(model.sessions), 1)
         self.assertEqual(model.sessions[0]["provider"], "codex")
         self.assertEqual(model.source_session_count, 1)
+
+    def test_mixed_provider_fixture_preserves_exact_codex_projection(self) -> None:
+        baseline = parse_snapshot(FIXTURE.read_bytes())
+        mixed = parse_snapshot(MIXED_FIXTURE.read_bytes())
+
+        self.assertEqual(mixed.to_dict(), baseline.to_dict())
+        self.assertEqual(len(mixed.sessions), 1)
+        self.assertEqual(mixed.sessions[0]["provider"], "codex")
+        self.assertEqual(mixed.codex_capability["provider"], "codex")
+        self.assertEqual(mixed.warnings, baseline.warnings)
+        self.assertEqual(mixed.launch_targets, baseline.launch_targets)
 
     def test_equivalent_uuid_spelling_is_canonicalized_across_references(self) -> None:
         value = fixture()

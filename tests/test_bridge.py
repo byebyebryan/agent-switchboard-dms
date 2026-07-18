@@ -19,6 +19,7 @@ from switchboard_dms.bridge import (
 ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / "switchboard-bridge"
 FIXTURE = ROOT / "tests" / "fixtures" / "snapshot-v1.json"
+MIXED_FIXTURE = ROOT / "tests" / "fixtures" / "snapshot-v1-mixed.json"
 PLAN_FIXTURE = ROOT / "tests" / "fixtures" / "presentation-plan-v1.json"
 SESSION_KEY = (
     "11111111-1111-4111-8111-111111111111:codex:22222222-2222-4222-8222-222222222222"
@@ -325,6 +326,23 @@ class BridgeCliTests(unittest.TestCase):
         model = payload["model"]
         self.assertEqual(model["modelVersion"], 1)
         self.assertEqual(len(model["sessions"]), 1)
+
+    def test_mixed_provider_fixture_has_exact_codex_only_bridge_model(self) -> None:
+        executable = self.fixture_executable()
+        baseline = self.payload(
+            self.run_bridge(
+                executable,
+                environment={"FAKE_SNAPSHOT": str(FIXTURE)},
+            )
+        )
+        mixed = self.payload(
+            self.run_bridge(
+                executable,
+                environment={"FAKE_SNAPSHOT": str(MIXED_FIXTURE)},
+            )
+        )
+
+        self.assertEqual(mixed, baseline)
 
     def test_entry_point_is_0755_and_works_outside_repo_via_path_or_symlink(
         self,
