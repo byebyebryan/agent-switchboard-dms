@@ -181,11 +181,19 @@ provider-identity grace after attachment; a second no-write turn completed
 without hook errors. The adapter never bypassed Codex's provider-owned trust
 boundary.
 
-Phase 2B follows with Claude discovery, hooks, supervisor/process liveness, and
-normalized runtime truth. DMS does not add Claude actions before those core
-capabilities exist. Phase 3C then adds core-authored Claude workspace and
-session presentation plans. The legacy `agentSessions` plugin remains the
-Claude and remote fallback until those paths pass equivalent live validation.
+Phase 2B follows with Claude hooks, Agent-View-disabled capability checks,
+process/tmux liveness, and normalized foreground runtime truth. During Phase
+2B this adapter continues validating the complete provider-neutral Snapshot v1
+envelope while deliberately projecting only Codex sessions,
+capability/errors, and launch targets. A mixed-provider fixture regression
+must prove Claude rows do not fail the bridge or manufacture Claude items,
+warnings, or actions. No QML or desktop-action change belongs to that
+compatibility gate.
+
+Phase 3C then adds core-authored Claude session and native-history presentation
+plans using the same managed-tmux lifecycle as Codex. The legacy
+`agentSessions` plugin remains the Claude and remote fallback until those paths
+pass equivalent live validation.
 
 ## Final audit and local handoff
 
