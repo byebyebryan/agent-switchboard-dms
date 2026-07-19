@@ -266,10 +266,14 @@ class DevelopmentWorkflowTests(unittest.TestCase):
         self.assertIn("stat -c '%u'", dev_script)
         self.assertIn("refusing to remove", dev_script)
 
-    def test_ci_installs_live_shell_test_dependencies(self):
+    def test_ci_uses_supported_actions_and_installs_test_dependencies(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
+        self.assertIn("actions/checkout@v6", workflow)
+        self.assertIn("actions/setup-python@v6", workflow)
+        self.assertIn("actions/setup-node@v6", workflow)
+        self.assertIn('node-version: "24"', workflow)
         install = workflow.index("sudo apt-get install --yes ripgrep")
         check = workflow.index("./scripts/check")
         self.assertLess(install, check)
