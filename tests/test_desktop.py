@@ -13,9 +13,11 @@ from switchboard_dms.desktop import (
     desktop_app_id,
     focus_existing_window,
     matching_niri_window_id,
+    open_history,
     open_project,
     open_session,
     serialize_response,
+    stop_session,
     terminal_launch_argv,
 )
 from switchboard_dms.process import ProcessOutput
@@ -203,6 +205,7 @@ class DesktopActionTests(unittest.TestCase):
             project_id=None,
             location_id=None,
             provider=None,
+            history=False,
             request_id=REQUEST_ID,
             timeout_ms=1000,
             can_focus_desktop=True,
@@ -241,6 +244,7 @@ class DesktopActionTests(unittest.TestCase):
                     project_id=None,
                     location_id=None,
                     provider=None,
+                    history=False,
                     request_id=REQUEST_ID,
                     timeout_ms=1000,
                     can_focus_desktop=True,
@@ -251,6 +255,7 @@ class DesktopActionTests(unittest.TestCase):
                     project_id=None,
                     location_id=None,
                     provider=None,
+                    history=False,
                     request_id=REQUEST_ID,
                     timeout_ms=1000,
                     can_focus_desktop=False,
@@ -286,11 +291,69 @@ class DesktopActionTests(unittest.TestCase):
             project_id=PROJECT_ID,
             location_id=LOCATION_ID,
             provider="claude",
+            history=False,
             request_id=REQUEST_ID,
             timeout_ms=1000,
             can_focus_desktop=True,
         )
         self.assertEqual(launched[0][-2:], ["attach-surface", SURFACE_ID])
+
+    @patch("switchboard_dms.desktop._prepared_plan")
+    def test_history_uses_project_ids_and_shared_attach_path(self, prepared) -> None:
+        prepared.return_value = plan("attach", tmuxTarget='{"pane":"%9"}')
+        launched: list[list[str]] = []
+
+        result = open_history(
+            swbctl="swbctl",
+            terminal="ghostty",
+            project_id=PROJECT_ID,
+            location_id=LOCATION_ID,
+            window_host="snap",
+            timeout_ms=1000,
+            request_id=REQUEST_ID,
+            which=self.which,
+            launcher=lambda argv: launched.append(list(argv)),
+        )
+
+        self.assertEqual(result, {"kind": "launched", "surfaceId": SURFACE_ID})
+        prepared.assert_called_once_with(
+            swbctl="swbctl",
+            session_key=None,
+            project_id=PROJECT_ID,
+            location_id=LOCATION_ID,
+            provider=None,
+            history=True,
+            request_id=REQUEST_ID,
+            timeout_ms=1000,
+            can_focus_desktop=True,
+        )
+
+    @patch("switchboard_dms.desktop.run_bridge")
+    def test_stop_returns_only_validated_core_action(self, bridge) -> None:
+        bridge.return_value = {
+            "bridgeVersion": 1,
+            "ok": True,
+            "action": {
+                "kind": "stop",
+                "status": "already_stopped",
+                "sessionKey": SESSION_KEY.replace(":codex:", ":claude:"),
+            },
+        }
+
+        result = stop_session(
+            swbctl="swbctl",
+            session_key=SESSION_KEY.replace(":codex:", ":claude:"),
+            timeout_ms=1000,
+        )
+
+        self.assertEqual(result, {"kind": "stopped", "status": "already_stopped"})
+        bridge.assert_called_once_with(
+            executable="swbctl",
+            refresh=False,
+            timeout_ms=1000,
+            max_sessions=1000,
+            stop_session=SESSION_KEY.replace(":codex:", ":claude:"),
+        )
 
     @patch("switchboard_dms.desktop.focus_existing_window", return_value=True)
     @patch("switchboard_dms.desktop.run_bridge")
@@ -368,6 +431,18 @@ class DesktopActionTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(OPENER.stat().st_mode), 0o755)
         result = subprocess.run(
             [str(OPENER), "--window-host", "snap\nlan", SESSION_KEY],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+            timeout=2,
+            env=os.environ.copy(),
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, b"")
+        self.assertNotEqual(result.stderr, b"")
+
+        result = subprocess.run(
+            [str(OPENER), "--stop", SESSION_KEY],
             cwd=ROOT,
             capture_output=True,
             check=False,

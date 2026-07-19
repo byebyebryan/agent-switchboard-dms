@@ -244,6 +244,7 @@ def _prepared_plan(
     project_id: str | None,
     location_id: str | None,
     provider: str | None,
+    history: bool,
     request_id: str,
     timeout_ms: int,
     can_focus_desktop: bool,
@@ -254,7 +255,8 @@ def _prepared_plan(
         timeout_ms=timeout_ms,
         max_sessions=DEFAULT_MAX_SESSIONS,
         prepare_open=session_key,
-        prepare_new=project_id,
+        prepare_new=(project_id if not history else None),
+        prepare_history=(project_id if history else None),
         location_id=location_id,
         provider=provider,
         request_id=request_id,
@@ -319,6 +321,7 @@ def _open_target(
     project_id: str | None,
     location_id: str | None,
     provider: str | None,
+    history: bool,
     window_host: str,
     timeout_ms: int,
     request_id: str | None = None,
@@ -329,13 +332,12 @@ def _open_target(
 
     if (session_key is None) == (project_id is None):
         raise ValueError("exactly one session or project target is required")
-    project_arguments = (project_id, location_id, provider)
-    if any(value is not None for value in project_arguments) and not all(
-        value is not None for value in project_arguments
-    ):
-        raise ValueError(
-            "project, location, and provider targets must be supplied together"
-        )
+    if session_key is not None and history:
+        raise ValueError("session targets cannot open project history")
+    if project_id is not None and location_id is None:
+        raise ValueError("project targets require a location")
+    if project_id is not None and ((provider is None) == (not history)):
+        raise ValueError("new targets require a provider and history targets do not")
 
     request = request_id or str(uuid.uuid4())
     plan = _prepared_plan(
@@ -344,6 +346,7 @@ def _open_target(
         project_id=project_id,
         location_id=location_id,
         provider=provider,
+        history=history,
         request_id=request,
         timeout_ms=timeout_ms,
         can_focus_desktop=True,
@@ -404,6 +407,7 @@ def _open_target(
         project_id=project_id,
         location_id=location_id,
         provider=provider,
+        history=history,
         request_id=request,
         timeout_ms=timeout_ms,
         can_focus_desktop=False,
@@ -443,6 +447,7 @@ def open_session(
         project_id=None,
         location_id=None,
         provider=None,
+        history=False,
         window_host=window_host,
         timeout_ms=timeout_ms,
         request_id=request_id,
@@ -473,12 +478,81 @@ def open_project(
         project_id=project_id,
         location_id=location_id,
         provider=provider,
+        history=False,
         window_host=window_host,
         timeout_ms=timeout_ms,
         request_id=request_id,
         which=which,
         launcher=launcher,
     )
+
+
+def open_history(
+    *,
+    swbctl: str,
+    terminal: str,
+    project_id: str,
+    location_id: str,
+    window_host: str,
+    timeout_ms: int,
+    request_id: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    launcher: DetachedLauncher = launch_detached,
+) -> dict[str, object]:
+    """Open Claude's native history picker in one managed project surface."""
+
+    return _open_target(
+        swbctl=swbctl,
+        terminal=terminal,
+        session_key=None,
+        project_id=project_id,
+        location_id=location_id,
+        provider=None,
+        history=True,
+        window_host=window_host,
+        timeout_ms=timeout_ms,
+        request_id=request_id,
+        which=which,
+        launcher=launcher,
+    )
+
+
+def stop_session(
+    *,
+    swbctl: str,
+    session_key: str,
+    timeout_ms: int,
+) -> dict[str, object]:
+    """Stop one core-revalidated launch-owned Claude runtime."""
+
+    response = run_bridge(
+        executable=swbctl,
+        refresh=False,
+        timeout_ms=timeout_ms,
+        max_sessions=DEFAULT_MAX_SESSIONS,
+        stop_session=session_key,
+    )
+    if response.get("ok") is not True:
+        raise _bridge_error(response)
+    action = response.get("action")
+    if not isinstance(action, dict):
+        raise DesktopActionError(
+            "desktop_action_invalid",
+            "The stop action response was invalid.",
+            retryable=False,
+        )
+    if action.get("status") == "blocked":
+        raise _blocked_error(action)
+    if action.get("kind") != "stop" or action.get("status") not in {
+        "stopped",
+        "already_stopped",
+    }:
+        raise DesktopActionError(
+            "desktop_action_invalid",
+            "The stop action response was invalid.",
+            retryable=False,
+        )
+    return {"kind": "stopped", "status": action["status"]}
 
 
 def _success(action: dict[str, object]) -> dict[str, object]:
@@ -557,6 +631,26 @@ def _uuid(value: str) -> str:
     return value
 
 
+def _session_key(value: str) -> str:
+    parts = value.split(":")
+    if len(parts) != 3 or parts[1] not in {"codex", "claude"}:
+        raise argparse.ArgumentTypeError("expected a canonical local session key")
+    _uuid(parts[0])
+    _uuid(parts[2])
+    if len(value) > 512:
+        raise argparse.ArgumentTypeError("expected a canonical local session key")
+    return value
+
+
+def _claude_session_key(value: str) -> str:
+    parsed = _session_key(value)
+    if parsed.split(":", 2)[1] != "claude":
+        raise argparse.ArgumentTypeError(
+            "expected a canonical local Claude session key"
+        )
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="switchboard-open",
@@ -573,7 +667,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project", type=_uuid)
     parser.add_argument("--location", type=_uuid)
     parser.add_argument("--provider", choices=("codex", "claude"))
-    parser.add_argument("session_key", nargs="?")
+    parser.add_argument("--history", action="store_true")
+    parser.add_argument("--stop", dest="stop_session", type=_claude_session_key)
+    parser.add_argument("session_key", nargs="?", type=_session_key)
     return parser
 
 
@@ -581,14 +677,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     project_arguments = (args.project, args.location, args.provider)
-    if any(value is not None for value in project_arguments) and not all(
+    if args.history:
+        if args.project is None or args.location is None or args.provider is not None:
+            parser.error(
+                "--history requires --project and --location without --provider"
+            )
+    elif any(value is not None for value in project_arguments) and not all(
         value is not None for value in project_arguments
     ):
         parser.error("--project, --location, and --provider must be supplied together")
-    if (args.session_key is None) == (args.project is None):
-        parser.error("supply one session key or one project/location/provider target")
+    target_count = sum(
+        (
+            args.session_key is not None,
+            args.project is not None,
+            args.stop_session is not None,
+        )
+    )
+    if target_count != 1:
+        parser.error("supply exactly one session, project, history, or stop target")
     try:
-        if args.session_key is not None:
+        if args.stop_session is not None:
+            action = stop_session(
+                swbctl=args.swbctl,
+                session_key=args.stop_session,
+                timeout_ms=args.timeout_ms,
+            )
+        elif args.session_key is not None:
             action = open_session(
                 swbctl=args.swbctl,
                 terminal=args.terminal,
@@ -596,7 +710,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 window_host=args.window_host,
                 timeout_ms=args.timeout_ms,
             )
+        elif args.history:
+            assert isinstance(args.project, str) and isinstance(args.location, str)
+            action = open_history(
+                swbctl=args.swbctl,
+                terminal=args.terminal,
+                project_id=args.project,
+                location_id=args.location,
+                window_host=args.window_host,
+                timeout_ms=args.timeout_ms,
+            )
         else:
+            assert (
+                isinstance(args.project, str)
+                and isinstance(args.location, str)
+                and isinstance(args.provider, str)
+            )
             action = open_project(
                 swbctl=args.swbctl,
                 terminal=args.terminal,

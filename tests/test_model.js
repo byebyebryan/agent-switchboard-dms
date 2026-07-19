@@ -42,7 +42,8 @@ function session(overrides = {}) {
             activityReason: "unknown",
             attachment: "detached",
             stateConfidence: "confirmed",
-            pinned: false
+            pinned: false,
+            canStop: false
         },
         overrides
     )
@@ -121,6 +122,14 @@ function newItems(items) {
     return items.filter(item => item._switchboardKind === "new")
 }
 
+function historyItems(items) {
+    return items.filter(item => item._switchboardKind === "history")
+}
+
+function stopItems(items) {
+    return items.filter(item => item._switchboardKind === "stop")
+}
+
 {
     const envelope = {
         bridgeVersion: 1,
@@ -184,6 +193,14 @@ function newItems(items) {
     ))
     assert.strictEqual(claudeItems.length, 1)
     assert.strictEqual(claudeItems[0]._provider, "claude")
+    const history = historyItems(modelApi.launcherItems(
+        model({ launchTargets: [launchTarget(), claude] }),
+        "history",
+        state()
+    ))
+    assert.strictEqual(history.length, 1)
+    assert.strictEqual(history[0]._projectId, claude.projectId)
+    assert.strictEqual(history[0]._locationId, claude.locationId)
 }
 
 {
@@ -201,6 +218,35 @@ function newItems(items) {
     assert.strictEqual(success.action.kind, "focused")
     assert.strictEqual(failure.ok, false)
     assert.strictEqual(failure.error.code, "unmanaged_surface")
+    const stopped = modelApi.parseActionResponse(JSON.stringify({
+        actionVersion: 1,
+        ok: true,
+        action: { kind: "stopped", status: "stopped" }
+    }))
+    assert.strictEqual(stopped.ok, true)
+    assert.strictEqual(stopped.action.status, "stopped")
+}
+
+{
+    const claude = session({
+        sessionKey: "11111111-1111-4111-8111-111111111111:claude:77777777-7777-4777-8777-777777777777",
+        provider: "claude",
+        providerSessionId: "77777777-7777-4777-8777-777777777777",
+        canStop: true
+    })
+    const items = stopItems(modelApi.launcherItems(
+        model({ sessions: [claude] }),
+        "stop",
+        state()
+    ))
+    assert.strictEqual(items.length, 1)
+    assert.strictEqual(items[0]._sessionKey, claude.sessionKey)
+    assert.match(items[0].comment, /launch-owned Claude/)
+    assert.strictEqual(stopItems(modelApi.launcherItems(
+        model({ sessions: [Object.assign({}, claude, { canStop: false })] }),
+        "",
+        state()
+    )).length, 0)
 }
 
 for (const badAction of [

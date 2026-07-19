@@ -10,9 +10,11 @@ import unittest
 
 from switchboard_dms.bridge import (
     MAX_BRIDGE_BYTES,
+    prepare_history_argv,
     prepare_new_argv,
     prepare_open_argv,
     serialize_response,
+    stop_session_argv,
 )
 
 
@@ -287,6 +289,77 @@ class BridgeCliTests(unittest.TestCase):
                 "--can-launch-terminal",
                 "--json",
             ],
+        )
+
+    def test_prepare_history_uses_exact_native_picker_prepare_argv(self) -> None:
+        arguments = self.temp / "arguments"
+        executable = self.fixture_executable()
+
+        result = self.run_bridge(
+            executable,
+            "--prepare-history",
+            PROJECT_ID,
+            "--location",
+            LOCATION_ID,
+            "--request-id",
+            REQUEST_ID,
+            environment={
+                "FAKE_ARGUMENTS": str(arguments),
+                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
+            },
+        )
+
+        payload = self.payload(result)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(payload["plan"]["kind"], "switch")
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8").splitlines(),
+            prepare_history_argv(
+                str(executable),
+                project_id=PROJECT_ID,
+                location_id=LOCATION_ID,
+                request_id=REQUEST_ID,
+            )[1:],
+        )
+
+    def test_stop_session_argv_and_action_envelope_are_exact(self) -> None:
+        arguments = self.temp / "arguments"
+        action = self.temp / "action.json"
+        action.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "protocolVersion": 1,
+                    "action": {
+                        "kind": "stop",
+                        "status": "stopped",
+                        "hostId": SESSION_KEY.split(":")[0],
+                        "sessionKey": CLAUDE_SESSION_KEY,
+                    },
+                },
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        executable = self.fixture_executable()
+
+        result = self.run_bridge(
+            executable,
+            "--stop-session",
+            CLAUDE_SESSION_KEY,
+            environment={
+                "FAKE_ARGUMENTS": str(arguments),
+                "FAKE_SNAPSHOT": str(action),
+            },
+        )
+
+        payload = self.payload(result)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(payload["action"]["status"], "stopped")
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8").splitlines(),
+            stop_session_argv(str(executable), session_key=CLAUDE_SESSION_KEY)[1:],
         )
 
     def test_select_surface_argv_is_exact_and_output_free(self) -> None:
@@ -701,6 +774,7 @@ class BridgeCliTests(unittest.TestCase):
             ("--max-sessions", "0"),
             ("--max-sessions", "1001"),
             ("--swbctl", ""),
+            ("--stop-session", SESSION_KEY),
         ):
             with self.subTest(arguments=arguments):
                 result = subprocess.run(

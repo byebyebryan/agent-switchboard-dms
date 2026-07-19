@@ -104,6 +104,10 @@ Item {
             targetArguments = [item._sessionKey];
         } else if (item._switchboardKind === "new" && item._projectId && item._locationId && item._provider) {
             targetArguments = ["--project", item._projectId, "--location", item._locationId, "--provider", item._provider];
+        } else if (item._switchboardKind === "history" && item._projectId && item._locationId) {
+            targetArguments = ["--history", "--project", item._projectId, "--location", item._locationId];
+        } else if (item._switchboardKind === "stop" && item._sessionKey) {
+            targetArguments = ["--stop", item._sessionKey];
         } else {
             return;
         }

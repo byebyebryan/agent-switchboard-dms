@@ -69,7 +69,9 @@ function _validateSession(session, hostId) {
         return false
     if (!_oneOf(session.stateConfidence, ["confirmed", "inferred", "unknown"]))
         return false
-    if (typeof session.pinned !== "boolean")
+    if (typeof session.pinned !== "boolean" || typeof session.canStop !== "boolean")
+        return false
+    if (session.canStop && (session.provider !== "claude" || session.runtimePresence !== "live"))
         return false
     return true
 }
@@ -122,9 +124,10 @@ function validateModel(model) {
     var locations = {}
     for (var targetIndex = 0; targetIndex < model.launchTargets.length; targetIndex++) {
         var target = model.launchTargets[targetIndex]
-        if (!_validateLaunchTarget(target) || locations[target.locationId] === true)
+        var targetIdentity = target.provider + ":" + target.locationId
+        if (!_validateLaunchTarget(target) || locations[targetIdentity] === true)
             return false
-        locations[target.locationId] = true
+        locations[targetIdentity] = true
     }
     return true
 }
@@ -168,6 +171,11 @@ function parseActionResponse(text) {
     }
     if (envelope.ok !== true || !_object(envelope.action))
         return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
+    if (envelope.action.kind === "stopped") {
+        if (["stopped", "already_stopped"].indexOf(envelope.action.status) === -1)
+            return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
+        return { ok: true, action: envelope.action }
+    }
     if (["focused", "switched", "launched"].indexOf(envelope.action.kind) === -1 || !_string(envelope.action.surfaceId))
         return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
     return { ok: true, action: envelope.action }
@@ -270,6 +278,25 @@ function _sessionItem(session, host, now, index) {
     }
 }
 
+function _stopItem(session, host, index) {
+    return {
+        id: "switchboard:stop:" + session.sessionKey,
+        name: "Stop " + _displayName(session),
+        icon: "material:stop_circle",
+        comment: "Gracefully stop this launch-owned Claude runtime and retire its managed tmux surface.",
+        categories: ["Switchboard"],
+        keywords: [session.sessionKey, session.providerSessionId, "stop", "close", "exit"],
+        _preScored: 2500 - index,
+        _switchboardKind: "stop",
+        _sessionKey: session.sessionKey,
+        _windowHost: host.displayName
+    }
+}
+
+function _stopSearchText(session, host) {
+    return _searchText(session, host) + "\nstop\nclose\nexit\nend claude session"
+}
+
 function _launchTargetSearchText(target, host) {
     return [
         target.projectName,
@@ -280,6 +307,20 @@ function _launchTargetSearchText(target, host) {
         host.displayName,
         host.hostId,
         "new " + target.provider + " session"
+    ].filter(function(value) {
+        return typeof value === "string"
+    }).join("\n").toLowerCase()
+}
+
+function _historyTargetSearchText(target, host) {
+    return [
+        target.projectName,
+        target.locationName,
+        target.projectId,
+        target.locationId,
+        host.displayName,
+        host.hostId,
+        "claude history resume session picker"
     ].filter(function(value) {
         return typeof value === "string"
     }).join("\n").toLowerCase()
@@ -309,6 +350,29 @@ function _launchTargetItem(target, host, projectTargetCount, index) {
         _projectId: target.projectId,
         _locationId: target.locationId,
         _provider: target.provider,
+        _windowHost: host.displayName
+    }
+}
+
+function _historyTargetItem(target, host, projectTargetCount, index) {
+    var label = target.projectName
+    if (projectTargetCount > 1 && !target.isDefault) {
+        var locationLabel = _string(target.locationName)
+            ? target.locationName
+            : target.locationId.substring(0, 8)
+        label += " — " + locationLabel
+    }
+    return {
+        id: "switchboard:history:" + target.projectId + ":" + target.locationId,
+        name: "Claude history — " + label,
+        icon: "material:history",
+        comment: "Open Claude's native session picker in this managed project location.",
+        categories: ["Switchboard"],
+        keywords: [target.projectId, target.locationId, "claude", "history", "resume"],
+        _preScored: 3900 - index,
+        _switchboardKind: "history",
+        _projectId: target.projectId,
+        _locationId: target.locationId,
         _windowHost: host.displayName
     }
 }
@@ -434,28 +498,36 @@ function launcherItems(model, query, state) {
         var projectId = model.launchTargets[targetCountIndex].projectId
         targetCounts[projectId] = (targetCounts[projectId] || 0) + 1
     }
-    var matchedTargets = []
+    var matchedTargetCount = 0
     for (var targetIndex = 0; targetIndex < model.launchTargets.length; targetIndex++) {
-        if (!normalizedQuery || _launchTargetSearchText(model.launchTargets[targetIndex], model.host).indexOf(normalizedQuery) !== -1)
-            matchedTargets.push(model.launchTargets[targetIndex])
-    }
-    for (var launchIndex = 0; launchIndex < matchedTargets.length; launchIndex++) {
-        var launchTarget = matchedTargets[launchIndex]
-        result.push(_launchTargetItem(launchTarget, model.host, targetCounts[launchTarget.projectId], launchIndex))
+        var launchTarget = model.launchTargets[targetIndex]
+        if (!normalizedQuery || _launchTargetSearchText(launchTarget, model.host).indexOf(normalizedQuery) !== -1) {
+            result.push(_launchTargetItem(launchTarget, model.host, targetCounts[launchTarget.projectId], targetIndex))
+            matchedTargetCount += 1
+        }
+        if (launchTarget.provider === "claude" && (!normalizedQuery || _historyTargetSearchText(launchTarget, model.host).indexOf(normalizedQuery) !== -1)) {
+            result.push(_historyTargetItem(launchTarget, model.host, targetCounts[launchTarget.projectId], targetIndex))
+            matchedTargetCount += 1
+        }
     }
 
     var sessions = model.sessions.slice().sort(_compareSessions)
     var matched = []
+    var matchedStops = []
     for (var index = 0; index < sessions.length; index++) {
         if (!normalizedQuery || _searchText(sessions[index], model.host).indexOf(normalizedQuery) !== -1)
             matched.push(sessions[index])
+        if (sessions[index].canStop && (!normalizedQuery || _stopSearchText(sessions[index], model.host).indexOf(normalizedQuery) !== -1))
+            matchedStops.push(sessions[index])
     }
     for (var itemIndex = 0; itemIndex < matched.length; itemIndex++)
         result.push(_sessionItem(matched[itemIndex], model.host, now, itemIndex))
+    for (var stopIndex = 0; stopIndex < matchedStops.length; stopIndex++)
+        result.push(_stopItem(matchedStops[stopIndex], model.host, stopIndex))
 
     if (model.sessions.length === 0 && model.launchTargets.length === 0)
         result.push(_statusItem("empty", "No local sessions or projects", "The validated snapshot contains no local sessions or launch targets.", 3000))
-    else if (matched.length === 0 && matchedTargets.length === 0)
+    else if (matched.length === 0 && matchedStops.length === 0 && matchedTargetCount === 0)
         result.push(_statusItem("no-match", "No matching Switchboard items", "Search covers sessions, projects, locations, hosts, and stable identities.", 3000))
     return result
 }

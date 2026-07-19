@@ -17,6 +17,7 @@ from .protocol import (
     MAX_MODEL_SESSIONS,
     ProtocolError,
     parse_presentation_plan,
+    parse_session_action,
     parse_snapshot,
 )
 
@@ -104,6 +105,37 @@ def prepare_new_argv(
         argv.append("--can-launch-terminal")
     argv.append("--json")
     return argv
+
+
+def prepare_history_argv(
+    executable: str,
+    *,
+    project_id: str,
+    location_id: str,
+    request_id: str,
+    can_focus_desktop: bool = True,
+    can_launch_terminal: bool = True,
+) -> list[str]:
+    argv = [
+        executable,
+        "prepare-history",
+        "--project",
+        project_id,
+        "--location",
+        location_id,
+        "--request-id",
+        request_id,
+    ]
+    if can_focus_desktop:
+        argv.append("--can-focus-desktop")
+    if can_launch_terminal:
+        argv.append("--can-launch-terminal")
+    argv.append("--json")
+    return argv
+
+
+def stop_session_argv(executable: str, *, session_key: str) -> list[str]:
+    return [executable, "stop-session", session_key, "--json"]
 
 
 def select_surface_argv(
@@ -197,6 +229,7 @@ def run_bridge(
     max_sessions: int,
     prepare_open: str | None = None,
     prepare_new: str | None = None,
+    prepare_history: str | None = None,
     location_id: str | None = None,
     provider: str | None = None,
     request_id: str | None = None,
@@ -204,9 +237,13 @@ def run_bridge(
     prepare_can_launch_terminal: bool = True,
     select_surface: str | None = None,
     tmux_client: str | None = None,
+    stop_session: str | None = None,
 ) -> dict[str, object]:
     try:
-        if prepare_open is not None or prepare_new is not None:
+        if any(
+            target is not None
+            for target in (prepare_open, prepare_new, prepare_history)
+        ):
             assert request_id is not None
             if prepare_open is not None:
                 argv = prepare_open_argv(
@@ -216,17 +253,23 @@ def run_bridge(
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
                 )
-            else:
-                assert (
-                    prepare_new is not None
-                    and location_id is not None
-                    and provider is not None
-                )
+            elif prepare_new is not None:
+                assert location_id is not None and provider is not None
                 argv = prepare_new_argv(
                     executable,
                     project_id=prepare_new,
                     location_id=location_id,
                     provider=provider,
+                    request_id=request_id,
+                    can_focus_desktop=prepare_can_focus_desktop,
+                    can_launch_terminal=prepare_can_launch_terminal,
+                )
+            else:
+                assert prepare_history is not None and location_id is not None
+                argv = prepare_history_argv(
+                    executable,
+                    project_id=prepare_history,
+                    location_id=location_id,
                     request_id=request_id,
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
@@ -255,6 +298,36 @@ def run_bridge(
                     )
                 )
             return _plan_success(plan)
+
+        if stop_session is not None:
+            output = run_process(
+                stop_session_argv(executable, session_key=stop_session),
+                timeout_ms=timeout_ms,
+            )
+            if output.exit_code != 0:
+                return _failure(
+                    BridgeError(
+                        "swbctl_nonzero_exit",
+                        f"swbctl exited with status {output.exit_code}.",
+                        True,
+                    )
+                )
+            payload = _snapshot_payload(output.stdout)
+            try:
+                action = parse_session_action(payload)
+            except ProtocolError:
+                return _failure(
+                    BridgeError(
+                        "action_invalid_protocol",
+                        "swbctl stdout was not a compatible session action.",
+                        False,
+                    )
+                )
+            return {
+                "bridgeVersion": BRIDGE_VERSION,
+                "ok": True,
+                "action": action,
+            }
 
         if select_surface is not None:
             assert tmux_client is not None
@@ -417,6 +490,15 @@ def _session_key(value: str) -> str:
     return value
 
 
+def _claude_session_key(value: str) -> str:
+    parsed = _session_key(value)
+    if parsed.split(":", 2)[1] != "claude":
+        raise argparse.ArgumentTypeError(
+            "expected a canonical local Claude session key"
+        )
+    return parsed
+
+
 def _tmux_client(value: str) -> str:
     if (
         not value
@@ -437,7 +519,9 @@ def build_parser() -> argparse.ArgumentParser:
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--prepare-open", type=_session_key)
     actions.add_argument("--prepare-new", type=_uuid)
+    actions.add_argument("--prepare-history", type=_uuid)
     actions.add_argument("--select-surface", type=_uuid)
+    actions.add_argument("--stop-session", type=_claude_session_key)
     parser.add_argument("--location", type=_uuid)
     parser.add_argument("--provider", choices=("codex", "claude"))
     parser.add_argument("--request-id", type=_uuid)
@@ -482,19 +566,33 @@ def _silence_stdout() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    preparing = args.prepare_open is not None or args.prepare_new is not None
+    preparing = any(
+        target is not None
+        for target in (args.prepare_open, args.prepare_new, args.prepare_history)
+    )
     if preparing != (args.request_id is not None):
         parser.error("a prepare action and --request-id must be supplied together")
-    new_arguments = (args.prepare_new, args.location, args.provider)
-    if any(value is not None for value in new_arguments) and not all(
-        value is not None for value in new_arguments
+    if args.prepare_new is not None and (
+        args.location is None or args.provider is None
     ):
         parser.error(
             "--prepare-new, --location, and --provider must be supplied together"
         )
+    if args.prepare_history is not None and args.location is None:
+        parser.error("--prepare-history and --location must be supplied together")
+    if args.prepare_history is not None and args.provider is not None:
+        parser.error("--provider does not apply to --prepare-history")
+    if (
+        args.prepare_new is None
+        and args.prepare_history is None
+        and (args.location is not None or args.provider is not None)
+    ):
+        parser.error("--location and --provider require a project prepare action")
     if (args.select_surface is None) != (args.tmux_client is None):
         parser.error("--select-surface and --tmux-client must be supplied together")
-    if (preparing or args.select_surface is not None) and args.refresh:
+    if (
+        preparing or args.select_surface is not None or args.stop_session is not None
+    ) and args.refresh:
         parser.error("--refresh applies only to snapshot reads")
     try:
         response = run_bridge(
@@ -504,11 +602,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_sessions=args.max_sessions,
             prepare_open=args.prepare_open,
             prepare_new=args.prepare_new,
+            prepare_history=args.prepare_history,
             location_id=args.location,
             provider=args.provider,
             request_id=args.request_id,
             select_surface=args.select_surface,
             tmux_client=args.tmux_client,
+            stop_session=args.stop_session,
         )
     except Exception:
         response = _internal_failure()

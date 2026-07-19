@@ -22,6 +22,7 @@ from switchboard_dms.protocol import (
     ProtocolError,
     SnapshotModel,
     parse_presentation_plan,
+    parse_session_action,
     parse_snapshot,
 )
 
@@ -104,6 +105,27 @@ class PresentationPlanTests(unittest.TestCase):
             parse_presentation_plan(encode(value))
 
 
+class SessionActionTests(unittest.TestCase):
+    def test_stop_action_is_validated_and_projected(self) -> None:
+        host_id = "11111111-1111-4111-8111-111111111111"
+        session_key = f"{host_id}:claude:55555555-5555-4555-8555-555555555555"
+        value = {
+            "schemaVersion": 1,
+            "protocolVersion": 1,
+            "action": {
+                "kind": "stop",
+                "status": "stopped",
+                "hostId": host_id,
+                "sessionKey": session_key,
+            },
+        }
+        self.assertEqual(parse_session_action(encode(value)), value["action"])
+
+        value["action"]["status"] = "blocked"
+        with self.assertRaisesRegex(ProtocolError, "requires an error"):
+            parse_session_action(encode(value))
+
+
 class SnapshotProjectionTests(unittest.TestCase):
     def test_fixture_projects_bounded_local_provider_model(self) -> None:
         model = parse_snapshot(FIXTURE.read_bytes())
@@ -120,6 +142,7 @@ class SnapshotProjectionTests(unittest.TestCase):
         self.assertEqual(session["runtimePresence"], "live")
         self.assertEqual(session["activity"], "working")
         self.assertEqual(session["recencyAt"], session["lastObservedAt"])
+        self.assertFalse(session["canStop"])
         self.assertEqual(model.codex_capability["status"], "available")
         self.assertEqual(model.claude_capability["status"], "neutral")
         self.assertEqual(model.to_dict()["modelVersion"], 2)
@@ -336,6 +359,41 @@ class SnapshotProjectionTests(unittest.TestCase):
             [session["provider"] for session in model.sessions], ["claude", "codex"]
         )
         self.assertEqual(model.source_session_count, 2)
+
+    def test_stop_capability_requires_live_confirmed_claude_surface(self) -> None:
+        value = json.loads(MIXED_FIXTURE.read_text(encoding="utf-8"))
+        claude = value["sessions"][1]
+        surface_id = "99999999-9999-4999-8999-999999999999"
+        claude["runtimePresence"] = "live"
+        claude["attachment"] = "detached"
+        claude["surfaceId"] = surface_id
+        value["surfaces"].append(
+            {
+                "surfaceId": surface_id,
+                "hostId": claude["hostId"],
+                "provider": "claude",
+                "transport": "tmux",
+                "transportLocator": "managed-claude-surface",
+                "role": "session",
+                "currentSessionKey": claude["sessionKey"],
+                "bindingConfidence": "confirmed",
+                "launchId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "createdAt": claude["firstObservedAt"],
+                "lastObservedAt": claude["lastObservedAt"],
+                "clientAttached": False,
+            }
+        )
+
+        model = parse_snapshot(encode(value))
+        sessions = {session["provider"]: session for session in model.sessions}
+
+        self.assertTrue(sessions["claude"]["canStop"])
+        self.assertFalse(sessions["codex"]["canStop"])
+
+        value["surfaces"][-1].pop("launchId")
+        model = parse_snapshot(encode(value))
+        sessions = {session["provider"]: session for session in model.sessions}
+        self.assertFalse(sessions["claude"]["canStop"])
 
     def test_mixed_provider_fixture_projects_both_provider_contracts(self) -> None:
         baseline = parse_snapshot(FIXTURE.read_bytes())

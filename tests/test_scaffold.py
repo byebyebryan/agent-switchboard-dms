@@ -187,6 +187,8 @@ class DocumentationContractTests(unittest.TestCase):
             "swbctl list --refresh --json",
             "swbctl prepare-open <session-key> --request-id <uuid> --json",
             "swbctl prepare-new --project <project-id> --location <location-id> --provider <provider> --request-id <uuid> --json",
+            "swbctl prepare-history --project <project-id> --location <location-id> --request-id <uuid> --json",
+            "swbctl stop-session <session-key> --json",
             "swbctl select-surface <surface-id> --client <tmux-client-id>",
             "swbctl attach-surface <surface-id>",
         )
@@ -215,7 +217,6 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_non_goals_are_explicit(self):
         for non_goal in (
-            "native Claude history-picker",
             "SSH",
             "provider hooks or liveness inference",
             "arbitrary working-directory launch",

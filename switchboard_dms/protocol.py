@@ -64,6 +64,7 @@ _ERROR_SCOPES = frozenset(
     {"host", "project", "provider", "session", "launch", "surface"}
 )
 _PRESENTATION_PLAN_KINDS = frozenset({"focus", "switch", "attach", "blocked"})
+_SESSION_ACTION_STATUSES = frozenset({"stopped", "already_stopped", "blocked"})
 
 _SENSITIVE_KEY_PARTS = (
     "accesskey",
@@ -968,6 +969,58 @@ def parse_presentation_plan(raw: str | bytes | bytearray) -> dict[str, Any]:
     return result
 
 
+def parse_session_action(raw: str | bytes | bytearray) -> dict[str, Any]:
+    """Validate and project one public Claude stop-action v1 envelope."""
+
+    table = _decode(raw)
+    schema = _integer(
+        _required(table, "schemaVersion", "envelope"), "envelope.schemaVersion"
+    )
+    protocol = _integer(
+        _required(table, "protocolVersion", "envelope"),
+        "envelope.protocolVersion",
+    )
+    if schema != SCHEMA_VERSION or protocol != PROTOCOL_VERSION:
+        raise ProtocolError("session action protocol version is incompatible")
+    path = "envelope.action"
+    source = _object(_required(table, "action", "envelope"), path)
+    kind = _string(_required(source, "kind", path), f"{path}.kind", maximum=16)
+    if kind != "stop":
+        raise ProtocolError(f"{path}.kind is unsupported")
+    status = _enum(
+        _required(source, "status", path),
+        f"{path}.status",
+        _SESSION_ACTION_STATUSES,
+    )
+    host_id = _uuid(_required(source, "hostId", path), f"{path}.hostId")
+    session_key, key_host, provider, _ = _session_key(
+        _required(source, "sessionKey", path), f"{path}.sessionKey"
+    )
+    if key_host != host_id or provider != "claude":
+        raise ProtocolError(f"{path} is not a host-local Claude identity")
+    result: dict[str, Any] = {
+        "kind": kind,
+        "status": status,
+        "hostId": host_id,
+        "sessionKey": session_key,
+    }
+    if source.get("error") is not None:
+        result["error"] = _error_record(source["error"], f"{path}.error")
+    if status == "blocked":
+        error = result.get("error")
+        if not isinstance(error, dict):
+            raise ProtocolError(f"{path} blocked action requires an error")
+        if (
+            error.get("hostId") not in {None, host_id}
+            or error.get("provider") not in {None, "claude"}
+            or error.get("sessionKey") not in {None, session_key}
+        ):
+            raise ProtocolError(f"{path} error routing fields disagree")
+    elif "error" in result:
+        raise ProtocolError(f"{path} successful action contains an error")
+    return result
+
+
 def _unique(records: list[dict[str, Any]], key: str, collection: str) -> set[str]:
     values = [str(record[key]) for record in records]
     if len(values) != len(set(values)):
@@ -1153,11 +1206,25 @@ def _project_session(
     session: dict[str, Any],
     projects: dict[str, dict[str, Any]],
     locations: dict[str, dict[str, Any]],
+    surfaces: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     project_id = session.get("projectId")
     location_id = session.get("locationId")
     project = projects.get(project_id) if isinstance(project_id, str) else None
     location = locations.get(location_id) if isinstance(location_id, str) else None
+    surface_id = session.get("surfaceId")
+    surface = surfaces.get(surface_id) if isinstance(surface_id, str) else None
+    can_stop = (
+        session["provider"] == "claude"
+        and session["runtimePresence"] == "live"
+        and surface is not None
+        and surface.get("transport") == "tmux"
+        and surface.get("role") == "session"
+        and surface.get("currentSessionKey") == session["sessionKey"]
+        and surface.get("bindingConfidence") == "confirmed"
+        and isinstance(surface.get("launchId"), str)
+        and surface.get("retiredAt") is None
+    )
     return {
         "sessionKey": session["sessionKey"],
         "hostId": session["hostId"],
@@ -1186,6 +1253,7 @@ def _project_session(
         "attachment": session["attachment"],
         "stateConfidence": session["stateConfidence"],
         "pinned": session.get("pinned", False),
+        "canStop": can_stop,
     }
 
 
@@ -1484,6 +1552,7 @@ _MODEL_SESSION_FIELDS = frozenset(
         "attachment",
         "stateConfidence",
         "pinned",
+        "canStop",
     }
 )
 
@@ -1561,6 +1630,7 @@ def _validate_model_session(value: object, path: str, host_id: str) -> None:
     _enum(table["attachment"], f"{path}.attachment", _ATTACHMENT)
     _enum(table["stateConfidence"], f"{path}.stateConfidence", _STATE_CONFIDENCE)
     _boolean(table["pinned"], f"{path}.pinned")
+    _boolean(table["canStop"], f"{path}.canStop")
 
 
 _MODEL_LAUNCH_TARGET_FIELDS = frozenset(
@@ -2235,8 +2305,9 @@ def parse_snapshot(
     snapshot = _validated_snapshot(raw)
     projects = {project["projectId"]: project for project in snapshot["projects"]}
     locations = {location["locationId"]: location for location in snapshot["locations"]}
+    surfaces = {surface["surfaceId"]: surface for surface in snapshot["surfaces"]}
     projected = [
-        _project_session(session, projects, locations)
+        _project_session(session, projects, locations, surfaces)
         for session in snapshot["sessions"]
         if session["provider"] in _PROVIDERS
     ]
