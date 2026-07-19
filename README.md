@@ -1,8 +1,9 @@
 # Switchboard for DMS
 
 Switchboard is a DankMaterialShell (DMS) launcher integration for starting new
-local Codex or Claude Code sessions and browsing or opening known local
-sessions from Agent Switchboard. The QML launcher
+local Codex or Claude Code sessions, opening known local sessions, entering
+Claude's native history picker, and safely stopping launch-owned Claude
+runtimes from Agent Switchboard. The QML launcher
 returns filtered rows from an in-memory last-good cache while persistent DMS
 `Process` instances run repository-owned snapshot and action helpers
 asynchronously. Selecting a configured project/provider location starts a new
@@ -86,6 +87,25 @@ Start one new Codex or Claude session from canonical configured IDs with:
 # or --provider claude
 ```
 
+Open Claude's provider-native history picker for one configured location with:
+
+```sh
+./switchboard-open --window-host HOST-DISPLAY-NAME \
+  --history --project PROJECT-UUID --location LOCATION-UUID
+```
+
+Stop one core-confirmed, launch-owned Claude session with:
+
+```sh
+./switchboard-open --stop HOST-ID:claude:SESSION-UUID
+```
+
+History selection remains inside Claude's unmodified `claude --resume` picker;
+no picker rows or transcript metadata enter the DMS model. Stop is offered only
+when the validated snapshot projects `canStop=true`, and core independently
+revalidates exact launch, surface, tmux, PID/birth, UID, and process-group
+ownership before acting.
+
 The helper generates one request ID. If focus fails, it reuses that ID while
 requesting an attach plan, so retries cannot reserve or start another provider
 runtime.
@@ -106,12 +126,12 @@ Run the baseline checks with:
 ```
 
 The checks validate the plugin manifest, static QML cache/process surface,
-deterministic JavaScript session/launch-target projection and search behavior, architecture and
-bridge contracts, bounded process behavior, Snapshot and PresentationPlan
-projection, niri matching, fixed Ghostty argv, same-request fallback, and the
-pinned synthetic protocol fixture. QML runtime tests are intentionally not claimed
-in CI because the live harness needs installed DMS imports and an active
-display.
+deterministic JavaScript session/action projection and search behavior,
+architecture and bridge contracts, bounded process behavior, Snapshot,
+PresentationPlan, and SessionAction projection, niri matching, fixed Ghostty
+argv, same-request fallback, and the pinned synthetic protocol fixture. QML
+runtime tests are intentionally not claimed in CI because the live harness
+needs installed DMS imports and an active display.
 
 Install this checkout as the local development plugin with:
 

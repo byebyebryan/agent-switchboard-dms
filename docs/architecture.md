@@ -16,6 +16,8 @@ The only accepted CLI commands are:
 - `swbctl list --refresh --json`
 - `swbctl prepare-open <session-key> --request-id <uuid> --json`
 - `swbctl prepare-new --project <project-id> --location <location-id> --provider <provider> --request-id <uuid> --json`
+- `swbctl prepare-history --project <project-id> --location <location-id> --request-id <uuid> --json`
+- `swbctl stop-session <session-key> --json`
 - `swbctl select-surface <surface-id> --client <tmux-client-id>`
 - `swbctl attach-surface <surface-id>`
 
@@ -25,10 +27,10 @@ public set: retained reads use `swbctl snapshot --json`, and refreshes use
 Switchboard modules, query internal databases, or depend on private storage
 layouts, and it does not invoke provider commands itself. The refresh form
 intentionally asks `swbctl` to reconcile providers behind that public boundary.
-Snapshot v1 and PresentationPlan v1 JSON are the only interchange formats at
-this boundary. Unknown safe snapshot fields are ignored for forward
-compatibility; presentation plan shapes are independently validated before any
-desktop action.
+Snapshot v1 JSON, PresentationPlan v1 JSON, and SessionAction v1 JSON are the only
+interchange formats at this boundary. Unknown safe snapshot fields are ignored
+for forward compatibility; presentation plans and stop actions are
+independently validated before any desktop action.
 
 ## Process bridge
 
@@ -53,8 +55,10 @@ versioned contract is in
 
 The repository-owned `switchboard-open` executable is the QML presentation
 adapter. It accepts either one canonical session key or one canonical
-project/location/provider target, generates one request UUID, asks the same
-validated bridge layer for a plan, and performs only the advertised operation:
+project/location/provider target, one Claude history target, or one stoppable
+Claude session. It generates a request UUID for presentation preparation, asks
+the same validated bridge layer for a plan or action, and performs only the
+advertised operation:
 
 1. `focus` matches a niri window by a SHA-256-derived Wayland application ID.
    An adopted pre-Switchboard pane can instead match the exact tmux workspace
@@ -65,6 +69,8 @@ validated bridge layer for a plan, and performs only the advertised operation:
    `systemd-run --user --scope --collect --quiet --` and runs only
    `swbctl attach-surface <surface-id>` inside it.
 4. `blocked` returns the core-authored structured error and starts nothing.
+5. `stop` delegates the canonical session key to core and accepts only a
+   validated stopped/already-stopped action or structured blocked error.
 
 If focus fails, the helper prepares again with the same request ID and
 `can_focus_desktop=false`. Only an attach plan is accepted as fallback. The
@@ -125,7 +131,10 @@ required display shape, provider identity coherence, and state enums while
 accepting unknown forward-compatible fields. It projects stable
 item IDs from session, project, and location identities; orders sessions by
 recency and launch targets canonically; and searches name, path, project,
-location, host, and stable identity.
+location, host, and stable identity. Claude launch targets additionally produce
+one native-history action, while only confirmed live launch-owned Claude rows
+with an active current tmux surface produce stop actions. The model carries only
+the boolean `canStop`; core revalidates ownership at execution time.
 
 The launcher surface emits `itemsChanged()` after state changes, but DMS 1.5.0's
 `AppSearchService.getPluginItemsForPlugin()` directly invokes `getItems()` and
@@ -137,7 +146,6 @@ promise live in-place updates.
 
 This repository does not currently provide:
 
-- native Claude history-picker or graceful-stop actions
 - SSH support or remote-host orchestration
 - provider hooks or liveness inference
 - arbitrary working-directory launch or project-catalog editing
@@ -148,5 +156,5 @@ This repository does not currently provide:
 
 It also does not recreate provider, tmux, SSH, compositor, terminal, or config
 management logic inside QML. The separate legacy `agentSessions` plugin remains
-available for remote behavior and untouched Claude-history fallback; this
-integration neither disables nor modifies it.
+available for remote behavior; this integration neither disables nor modifies
+it.

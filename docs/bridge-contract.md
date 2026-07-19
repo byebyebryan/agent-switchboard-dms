@@ -8,11 +8,12 @@ Quickshell prerequisites are listed in the README.
 
 The bridge invokes only public `swbctl` commands. Snapshot reads validate
 Snapshot v1 and emit a smaller frontend-owned model. Action modes validate
-PresentationPlan v1 or delegate one exact surface selection. It does not
+PresentationPlan v1 or SessionAction v1, or delegate one exact surface
+selection. It does not
 directly read Switchboard storage or invoke providers, terminals, or the
-compositor. `--refresh`, `prepare-open`, and `prepare-new` intentionally ask
-`swbctl` to perform
-full reconciliation behind that public boundary.
+compositor. `--refresh`, `prepare-open`, `prepare-new`, `prepare-history`, and
+`stop-session` intentionally ask `swbctl` to perform full reconciliation behind
+that public boundary.
 
 ## Invocation
 
@@ -27,6 +28,11 @@ full reconciliation behind that public boundary.
     --request-id UUID
     [--timeout-ms MILLISECONDS]
 ./switchboard-bridge [--swbctl EXECUTABLE]
+    --prepare-history PROJECT-ID --location LOCATION-ID --request-id UUID
+    [--timeout-ms MILLISECONDS]
+./switchboard-bridge [--swbctl EXECUTABLE]
+    --stop-session SESSION-KEY [--timeout-ms MILLISECONDS]
+./switchboard-bridge [--swbctl EXECUTABLE]
     --select-surface SURFACE-ID --tmux-client CLIENT-ID
     [--timeout-ms MILLISECONDS]
 ```
@@ -38,8 +44,9 @@ full reconciliation behind that public boundary.
   "--json"]`.
 - `--timeout-ms` defaults to `10000` and accepts `100` through `60000`.
 - `--max-sessions` defaults to `1000` and accepts `1` through `1000`.
-- `--prepare-open`, `--prepare-new`, and `--select-surface` are mutually
-  exclusive with one another and with `--refresh`.
+- `--prepare-open`, `--prepare-new`, `--prepare-history`, `--stop-session`, and
+  `--select-surface` are mutually exclusive with one another and with
+  `--refresh`.
 - Existing-session preparation uses exactly `[EXECUTABLE, "prepare-open", SESSION_KEY,
   "--request-id", UUID, "--can-focus-desktop", "--can-launch-terminal",
   "--json"]`.
@@ -47,6 +54,11 @@ full reconciliation behind that public boundary.
   "--project", PROJECT_ID, "--location", LOCATION_ID, "--provider", PROVIDER,
   "--request-id", UUID, "--can-focus-desktop", "--can-launch-terminal",
   "--json"]`.
+- Native-history preparation uses exactly `[EXECUTABLE, "prepare-history",
+  "--project", PROJECT_ID, "--location", LOCATION_ID, "--request-id", UUID,
+  "--can-focus-desktop", "--can-launch-terminal", "--json"]`.
+- Stop uses exactly `[EXECUTABLE, "stop-session", SESSION_KEY, "--json"]` and
+  accepts only canonical local Claude session keys.
 - Selection uses exactly `[EXECUTABLE, "select-surface", SURFACE_ID,
   "--client", CLIENT_ID]` and requires empty stdout on success.
 
@@ -88,6 +100,16 @@ A successful selection returns only the selected stable surface ID:
 {"action":{"kind":"selected","surfaceId":"33333333-3333-4333-8333-333333333333"},"bridgeVersion":1,"ok":true}
 ```
 
+A stop returns only the independently validated public action:
+
+```json
+{"action":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"stop","sessionKey":"11111111-1111-4111-8111-111111111111:claude:55555555-5555-4555-8555-555555555555","status":"stopped"},"bridgeVersion":1,"ok":true}
+```
+
+`already_stopped` is also successful. The bridge preserves a validated core
+`blocked` action; `switchboard-open` converts it to the bounded structured
+failure consumed by QML and never treats it as a successful UI action.
+
 ## Failure
 
 Managed failure exits `1`:
@@ -102,7 +124,6 @@ The stable error codes are:
 | --- | --- | --- |
 | `executable_not_found` | no | The configured executable was not found. |
 | `executable_permission_denied` | no | The configured file is not executable. |
-| `executable_start_failed` | yes | The operating system could not start it. |
 | `process_timeout` | yes | The bounded deadline expired. |
 | `stdout_overflow` | no | Snapshot stdout exceeded its limit. |
 | `stderr_overflow` | no | Diagnostic stderr exceeded its limit. |
@@ -111,6 +132,7 @@ The stable error codes are:
 | `snapshot_invalid_json` | no | Snapshot stdout was not one valid JSON document. |
 | `snapshot_invalid_protocol` | no | JSON was not a compatible Snapshot v1 envelope. |
 | `plan_invalid_protocol` | no | JSON was not a compatible PresentationPlan v1 envelope. |
+| `action_invalid_protocol` | no | JSON was not a compatible SessionAction v1 envelope. |
 | `action_unexpected_output` | no | A successful selection wrote unexpected stdout. |
 | `bridge_serialization_failed` | no | The bridge model could not be serialized. |
 | `bridge_output_overflow` | no | The final bridge response exceeded its limit. |
@@ -149,17 +171,19 @@ after a complete exit-zero success envelope passes frontend model validation.
 
 ## Desktop action envelope
 
-`switchboard-open` accepts either one session key or one
-project/location/provider target and emits a separate `actionVersion: 1`
-envelope. Success kinds are `focused`, `switched`, or `launched`, each with one
-stable surface ID.
+`switchboard-open` accepts one session key, one project/location/provider
+target, one project/location Claude-history target, or one stop session key and
+emits a separate `actionVersion: 1` envelope. Presentation success kinds are
+`focused`, `switched`, or `launched`, each with one stable surface ID; stop
+success is `stopped` with core-authored `stopped` or `already_stopped` status.
 Failure uses the same bounded `{code,message,retryable}` display shape. The
 helper's stdout is one compact newline-terminated JSON object no larger than 16
 KiB; stderr is ignored by QML. It accepts one `--swbctl` token, one `--terminal`
 token, a bounded `--window-host`, the shared timeout, and either one canonical
-Codex or Claude session key or canonical project and location IDs plus the
-bounded provider enum. It never accepts cwd, raw tmux locators, provider argv,
-desktop tokens, or niri window IDs from QML.
+Codex or Claude session key, canonical project and location IDs plus the
+bounded provider enum, canonical project/location history IDs, or one canonical
+Claude stop key. It never accepts cwd, raw tmux locators, provider argv, desktop
+tokens, or niri window IDs from QML.
 
 ## Reviewed contract provenance
 

@@ -247,6 +247,32 @@ moved to the desktop trash. The pre-existing active Claude session remained
 alive throughout. This exercise did not launch Ghostty, so live niri focus and
 same-window dedup remain the compositor acceptance item described above.
 
+## Phase 3C history and stop evidence
+
+The 2026-07-18 final-increment exercise refreshed the installed core tool from
+the completed checkout and used the development DMS symlink, an isolated
+registry, and a dedicated tmux server. It first confirmed that the bridge
+projected the controlled confirmed Claude runtime with `canStop=true`, both
+provider launch targets, and no warnings. The public stop action sent orderly
+interactive `/exit`, retired the exact surface, and removed only the
+test-owned process; the unrelated pre-existing Claude session remained alive.
+
+The history action then created one unbound attach-before-start surface and
+opened Claude Code 2.1.214's native `claude --resume` picker with Agent View
+disabled. Selecting the most recent test-owned conversation rebound its exact
+UUID to the new surface through `SessionStart`, after which the same safe stop
+path returned it to stopped and resumable. No picker rows, transcript content,
+provider argv, cwd, or tmux locator entered the DMS model.
+
+A second history action was cancelled with the picker's native Escape control.
+Complete reconciliation retired the vanished surface and recorded the unbound
+history launch as failed with `surface_terminated`; it did not create a
+session. No prompt was submitted and no model turn was requested. The isolated
+registry and tmux server were removed, and only the generated test transcript
+was moved to the desktop trash. This completes the provider, bridge, and DMS
+action contract while leaving the earlier live niri focus/same-window
+observation gap explicitly unclaimed.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

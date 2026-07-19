@@ -201,20 +201,26 @@ start/bind/reopen acceptance passed against the installed core and retained DMS
 bridge with no prompt or model turn; the evidence is recorded in
 [`docs/live-integration.md`](live-integration.md).
 
-The native history-picker action, graceful managed-runtime stop, and remote
-hosts remain later increments. The legacy `agentSessions` plugin remains the
-remote and untouched Claude-history fallback until those paths pass equivalent
-live validation.
+The final Phase 3C increment adds Claude's native history picker and safe
+managed-runtime stop. The bridge invokes public `prepare-history` and
+`stop-session` commands with fixed argv, validates PresentationPlan v1 or
+SessionAction v1 independently, and never receives picker rows, provider argv,
+or tmux locators. The frontend derives only a conservative `canStop` boolean
+from a confirmed current live Claude surface; core revalidates launch, surface,
+tmux, PID/birth, UID, and process-group ownership before acting. Installed
+selection, stop, and picker-cancellation acceptance passed without a prompt or
+model turn. Remote hosts remain later work, and the legacy `agentSessions`
+plugin remains only the untouched remote fallback.
 
-## Final audit and local handoff
+## Final audit and publication
 
 - Re-run all unit, JSON, shell, QML, fixture, and whitespace checks.
 - Review the complete worktree against the boundary and non-goals.
-- Make small local commits with clear messages only after review.
-- Do not push; leave remote publication to an explicit later instruction.
+- Keep core and DMS changes in separate reviewable commits.
+- Publish both repositories only after the full gates pass and the user has
+  explicitly authorized the push.
 
-Native Claude history picking, graceful managed-runtime stop, SSH, arbitrary
-working-directory launch, project-catalog editing, direct
+SSH, arbitrary working-directory launch, project-catalog editing, direct
 tmux locator or provider-launch logic, non-niri/non-Ghostty adapters, chezmoi
 cutover, and a rich widget remain non-goals for this increment. The legacy
-plugin remains the remote and Claude-history fallback.
+plugin remains the remote-host fallback.
