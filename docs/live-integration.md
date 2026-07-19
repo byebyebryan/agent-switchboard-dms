@@ -273,6 +273,28 @@ was moved to the desktop trash. This completes the provider, bridge, and DMS
 action contract while leaving the earlier live niri focus/same-window
 observation gap explicitly unclaimed.
 
+## Phase 3C compositor closeout evidence
+
+A follow-up 2026-07-18 exercise used the active DMS service's niri and Wayland
+environment with an isolated Switchboard state tree and a dedicated tmux
+socket. The test wrapper explicitly removed the control shell's outer `TMUX`
+value. The installed helper launched one managed Ghostty window whose exact
+application ID resolved to one niri window.
+
+Reopening the controlled Claude session through `switchboard-open` returned a
+`focused` action for the existing surface. Its niri window ID was unchanged and
+the matching managed-window count remained one, completing the live focus and
+same-window dedup check that the earlier harness could not observe. Claude
+started only after the real terminal client attached; no prompt was submitted
+and no model turn was requested.
+
+The public stop action removed only the controlled Claude runtime and managed
+window. The unrelated pre-existing Claude session remained alive, no
+test-owned process or surface remained, the isolated state was removed, and
+the empty test transcript was moved to the desktop trash. Phase 3C compositor
+acceptance is therefore complete without adding niri, Ghostty, provider argv,
+or tmux identity to the DMS model.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

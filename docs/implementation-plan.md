@@ -209,8 +209,10 @@ or tmux locators. The frontend derives only a conservative `canStop` boolean
 from a confirmed current live Claude surface; core revalidates launch, surface,
 tmux, PID/birth, UID, and process-group ownership before acting. Installed
 selection, stop, and picker-cancellation acceptance passed without a prompt or
-model turn. Remote hosts remain later work, and the legacy `agentSessions`
-plugin remains only the untouched remote fallback.
+model turn. A follow-up isolated desktop exercise also passed live niri focus
+and same-window dedup while leaving the pre-existing Claude session untouched.
+Remote hosts remain later work, and the legacy `agentSessions` plugin remains
+only the untouched remote fallback.
 
 ## Final audit and publication
 
