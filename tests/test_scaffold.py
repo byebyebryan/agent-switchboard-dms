@@ -266,6 +266,14 @@ class DevelopmentWorkflowTests(unittest.TestCase):
         self.assertIn("stat -c '%u'", dev_script)
         self.assertIn("refusing to remove", dev_script)
 
+    def test_ci_installs_live_shell_test_dependencies(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        install = workflow.index("sudo apt-get install --yes ripgrep")
+        check = workflow.index("./scripts/check")
+        self.assertLess(install, check)
+
 
 class FixtureContractTests(unittest.TestCase):
     def test_fixture_digest_and_v1_envelope(self):
