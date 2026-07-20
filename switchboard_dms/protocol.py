@@ -1,4 +1,4 @@
-"""Bounded Snapshot v2 validation and DMS-facing model v3 projection.
+"""Bounded Fleet/Snapshot validation and DMS-facing model projection.
 
 This module deliberately duplicates only Agent Switchboard's public JSON
 contract.  It never imports core internals, reads the registry, invokes Git, or
@@ -19,6 +19,9 @@ from uuid import UUID
 SCHEMA_VERSION = 2
 PROTOCOL_VERSION = 2
 MODEL_VERSION = 3
+FLEET_VERSION = 1
+FLEET_MODEL_VERSION = 4
+MAX_FLEET_HOSTS = 33
 
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_JSON_DEPTH = 32
@@ -1650,6 +1653,7 @@ def parse_snapshot(
             if checkout["repositoryId"] == repository_id
             and checkout["isDefault"]
             and checkout["declared"]
+            and checkout["present"]
         ]
         if candidates:
             default_checkout[project_id] = sorted(
@@ -1859,5 +1863,752 @@ def parse_snapshot(
             "sessionLimit": max_sessions,
         },
     )
+    model.to_dict()
+    return model
+
+
+_FLEET_MODEL_TASK_FIELDS = {
+    "taskId",
+    "projectId",
+    "projectName",
+    "checkoutId",
+    "checkoutName",
+    "checkoutKind",
+    "checkoutBranch",
+    "checkoutIsDefault",
+    "title",
+    "purpose",
+    "preferredProvider",
+    "status",
+    "pinned",
+    "currentSessionKey",
+    "createdAt",
+    "updatedAt",
+    "closedAt",
+    "provider",
+    "runtimePresence",
+    "resumability",
+    "activity",
+    "activityReason",
+    "attachment",
+    "stateConfidence",
+    "recencyAt",
+    "canStop",
+    "hostId",
+    "hostDisplayName",
+    "isLocal",
+    "hostReachability",
+    "hostStale",
+}
+_FLEET_MODEL_INBOX_FIELDS = {
+    "sessionKey",
+    "providerSessionId",
+    "provider",
+    "projectId",
+    "projectName",
+    "checkoutId",
+    "checkoutName",
+    "name",
+    "runtimePresence",
+    "resumability",
+    "activity",
+    "activityReason",
+    "attachment",
+    "stateConfidence",
+    "recencyAt",
+    "canStop",
+    "hostId",
+    "hostDisplayName",
+    "isLocal",
+    "hostReachability",
+    "hostStale",
+}
+
+
+def _fleet_error(value: object, path: str) -> dict[str, Any]:
+    table = _object(value, path)
+    return {
+        "code": _string(_required(table, "code", path), f"{path}.code", maximum=128),
+        "message": _string(
+            _required(table, "message", path), f"{path}.message", maximum=2048
+        ),
+        "retryable": _boolean(_required(table, "retryable", path), f"{path}.retryable"),
+    }
+
+
+def _optional_integer_field(table: dict[str, Any], key: str, path: str) -> int | None:
+    value = _required(table, key, path)
+    return None if value is None else _integer(value, f"{path}.{key}")
+
+
+def _validated_fleet(raw: str | bytes | bytearray) -> dict[str, Any]:
+    table = _decode(raw)
+    _versions(table)
+    if (
+        _integer(_required(table, "fleetVersion", "envelope"), "envelope.fleetVersion")
+        != FLEET_VERSION
+    ):
+        raise ProtocolError(f"envelope.fleetVersion expected {FLEET_VERSION}")
+    local_host_id = _uuid(
+        _required(table, "localHostId", "envelope"), "envelope.localHostId"
+    )
+    hosts_source = _array(
+        _required(table, "hosts", "envelope"),
+        "envelope.hosts",
+        maximum=MAX_FLEET_HOSTS,
+    )
+    if not hosts_source:
+        raise ProtocolError("envelope.hosts requires one local entry")
+    hosts: list[dict[str, Any]] = []
+    aliases: list[str] = []
+    host_ids: set[str] = set()
+    for index, value in enumerate(hosts_source):
+        path = f"envelope.hosts[{index}]"
+        source = _object(value, path)
+        source_kind = _enum(
+            _required(source, "source", path),
+            f"{path}.source",
+            frozenset({"local", "remote"}),
+        )
+        remote_name = _optional_string(source, "remoteName", path, maximum=128)
+        raw_host_id = _required(source, "hostId", path)
+        host_id = None if raw_host_id is None else _uuid(raw_host_id, f"{path}.hostId")
+        display_name = _string(
+            _required(source, "displayName", path),
+            f"{path}.displayName",
+            maximum=256,
+        )
+        reachability = _enum(
+            _required(source, "reachability", path),
+            f"{path}.reachability",
+            frozenset({"online", "offline", "unknown"}),
+        )
+        observed_at = _optional_integer_field(source, "snapshotObservedAt", path)
+        received_at = _optional_integer_field(source, "snapshotReceivedAt", path)
+        last_attempt_at = _optional_integer_field(source, "lastAttemptAt", path)
+        stale = _boolean(_required(source, "stale", path), f"{path}.stale")
+        raw_error = _required(source, "error", path)
+        error = None if raw_error is None else _fleet_error(raw_error, f"{path}.error")
+        raw_snapshot = _required(source, "snapshot", path)
+        snapshot = None
+        snapshot_model = None
+        if raw_snapshot is not None:
+            snapshot_raw = json.dumps(
+                raw_snapshot,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            snapshot = _validated_snapshot(snapshot_raw)
+            snapshot_model = parse_snapshot(
+                snapshot_raw, max_sessions=MAX_MODEL_SESSIONS
+            ).to_dict()
+        if source_kind == "local":
+            if index != 0 or remote_name is not None:
+                raise ProtocolError("envelope local host ordering is invalid")
+            if host_id != local_host_id or snapshot is None:
+                raise ProtocolError("envelope local host identity is invalid")
+            if reachability != "online" or stale or error is not None:
+                raise ProtocolError("envelope local host must be healthy")
+        else:
+            if index == 0 or remote_name is None:
+                raise ProtocolError("envelope remote host routing is invalid")
+            aliases.append(remote_name)
+        if host_id is not None:
+            if host_id in host_ids:
+                raise ProtocolError("envelope contains duplicate host identities")
+            host_ids.add(host_id)
+        if snapshot is None:
+            if observed_at is not None or received_at is not None:
+                raise ProtocolError("envelope snapshot timestamps require a snapshot")
+            if reachability == "online":
+                raise ProtocolError("envelope online host requires a snapshot")
+        else:
+            if (
+                snapshot["host"]["hostId"] != host_id
+                or snapshot["host"]["displayName"] != display_name
+                or snapshot["generatedAt"] != observed_at
+                or received_at is None
+            ):
+                raise ProtocolError("envelope host snapshot identity is inconsistent")
+        if reachability == "online" and error is not None:
+            raise ProtocolError("envelope online host cannot contain an error")
+        if reachability == "offline" and error is None:
+            raise ProtocolError("envelope offline host requires an error")
+        hosts.append(
+            {
+                "source": source_kind,
+                "remoteName": remote_name,
+                "hostId": host_id,
+                "displayName": display_name,
+                "reachability": reachability,
+                "snapshotObservedAt": observed_at,
+                "snapshotReceivedAt": received_at,
+                "lastAttemptAt": last_attempt_at,
+                "stale": stale,
+                "error": error,
+                "snapshot": snapshot,
+                "snapshotModel": snapshot_model,
+            }
+        )
+    if aliases != sorted(aliases) or len(aliases) != len(set(aliases)):
+        raise ProtocolError("envelope remote aliases are not unique and ordered")
+    return {
+        "generatedAt": _integer(
+            _required(table, "generatedAt", "envelope"), "envelope.generatedAt"
+        ),
+        "localHostId": local_host_id,
+        "hosts": hosts,
+    }
+
+
+def _validate_fleet_model(value: object) -> dict[str, Any]:
+    _validate_json_tree(value, "model")
+    table = _object(value, "model")
+    required = {
+        "modelVersion",
+        "sourceSchemaVersion",
+        "sourceProtocolVersion",
+        "sourceFleetVersion",
+        "generatedAt",
+        "localHostId",
+        "hosts",
+        "projects",
+        "tasks",
+        "inboxSessions",
+        "warnings",
+        "truncation",
+    }
+    if set(table) != required:
+        raise ProtocolError("fleet model contains missing or unknown fields")
+    for key, expected in (
+        ("modelVersion", FLEET_MODEL_VERSION),
+        ("sourceSchemaVersion", SCHEMA_VERSION),
+        ("sourceProtocolVersion", PROTOCOL_VERSION),
+        ("sourceFleetVersion", FLEET_VERSION),
+    ):
+        if _integer(table[key], f"model.{key}") != expected:
+            raise ProtocolError(f"model.{key} is incompatible")
+    _integer(table["generatedAt"], "model.generatedAt")
+    local_host_id = _uuid(table["localHostId"], "model.localHostId")
+    hosts = _array(table["hosts"], "model.hosts", maximum=MAX_FLEET_HOSTS)
+    host_rows: dict[str, dict[str, Any]] = {}
+    local_count = 0
+    for index, value in enumerate(hosts):
+        path = f"model.hosts[{index}]"
+        row = _object(value, path)
+        if set(row) != {
+            "source",
+            "remoteName",
+            "hostId",
+            "displayName",
+            "reachability",
+            "stale",
+            "hasSnapshot",
+            "error",
+        }:
+            raise ProtocolError("fleet model host fields are invalid")
+        source = _enum(row["source"], f"{path}.source", frozenset({"local", "remote"}))
+        host_id = (
+            None if row["hostId"] is None else _uuid(row["hostId"], f"{path}.hostId")
+        )
+        remote_name = _optional_string(row, "remoteName", path, maximum=128)
+        _string(row["displayName"], f"{path}.displayName", maximum=256)
+        reachability = _enum(
+            row["reachability"],
+            f"{path}.reachability",
+            frozenset({"online", "offline", "unknown"}),
+        )
+        stale = _boolean(row["stale"], f"{path}.stale")
+        has_snapshot = _boolean(row["hasSnapshot"], f"{path}.hasSnapshot")
+        has_error = row["error"] is not None
+        if has_error:
+            _fleet_error(row["error"], f"{path}.error")
+        if source == "local":
+            local_count += 1
+            if (
+                index != 0
+                or remote_name is not None
+                or host_id != local_host_id
+                or not has_snapshot
+                or reachability != "online"
+                or stale
+                or has_error
+            ):
+                raise ProtocolError("fleet model local host identity is invalid")
+        elif index == 0 or remote_name is None:
+            raise ProtocolError("fleet model remote host routing is invalid")
+        if host_id is None and has_snapshot:
+            raise ProtocolError("fleet model unknown host cannot contain a snapshot")
+        if reachability == "online" and (not has_snapshot or has_error):
+            raise ProtocolError("fleet model online host state is invalid")
+        if reachability == "offline" and not has_error:
+            raise ProtocolError("fleet model offline host requires an error")
+        if host_id is not None:
+            if host_id in host_rows:
+                raise ProtocolError("fleet model contains duplicate host identities")
+            host_rows[host_id] = row
+    if local_count != 1 or local_host_id not in host_rows:
+        raise ProtocolError("fleet model omitted the local host")
+    projects = _array(table["projects"], "model.projects", maximum=MAX_MODEL_PROJECTS)
+    project_ids: set[str] = set()
+    project_rows: dict[str, dict[str, Any]] = {}
+    project_route_hosts: dict[str, set[str]] = {}
+    for index, value in enumerate(projects):
+        path = f"model.projects[{index}]"
+        row = _object(value, path)
+        if set(row) != {"projectId", "name", "repositoryName", "routes"}:
+            raise ProtocolError("fleet model project fields are invalid")
+        project_id = _uuid(row["projectId"], f"{path}.projectId")
+        if project_id in project_ids:
+            raise ProtocolError("fleet model contains duplicate projects")
+        project_ids.add(project_id)
+        project_rows[project_id] = row
+        _string(row["name"], f"{path}.name", maximum=256)
+        _optional_string(row, "repositoryName", path, maximum=256)
+        routes = _array(row["routes"], f"{path}.routes", maximum=MAX_FLEET_HOSTS)
+        if not routes:
+            raise ProtocolError("fleet model project requires one host route")
+        route_hosts: set[str] = set()
+        for route_index, route_value in enumerate(routes):
+            route_path = f"{path}.routes[{route_index}]"
+            route = _object(route_value, route_path)
+            if set(route) != {
+                "hostId",
+                "hostDisplayName",
+                "isLocal",
+                "defaultProvider",
+                "defaultCheckoutId",
+                "reachability",
+                "stale",
+            }:
+                raise ProtocolError("fleet model project route fields are invalid")
+            route_host = _uuid(route["hostId"], f"{route_path}.hostId")
+            host = host_rows.get(route_host)
+            if host is None or route_host in route_hosts:
+                raise ProtocolError("fleet model project route identity is invalid")
+            route_hosts.add(route_host)
+            host_display_name = _string(
+                route["hostDisplayName"],
+                f"{route_path}.hostDisplayName",
+                maximum=256,
+            )
+            is_local = _boolean(route["isLocal"], f"{route_path}.isLocal")
+            _provider(route["defaultProvider"], f"{route_path}.defaultProvider")
+            _optional_uuid(route, "defaultCheckoutId", route_path)
+            reachability = _enum(
+                route["reachability"],
+                f"{route_path}.reachability",
+                frozenset({"online", "offline", "unknown"}),
+            )
+            stale = _boolean(route["stale"], f"{route_path}.stale")
+            if (
+                host_display_name != host["displayName"]
+                or is_local != (host["source"] == "local")
+                or reachability != host["reachability"]
+                or stale != host["stale"]
+            ):
+                raise ProtocolError("fleet model project route disagrees with its host")
+        project_route_hosts[project_id] = route_hosts
+    tasks = _array(table["tasks"], "model.tasks", maximum=MAX_MODEL_TASKS)
+    task_ids: set[tuple[str, str]] = set()
+    assigned_session_keys: set[str] = set()
+    for index, value in enumerate(tasks):
+        path = f"model.tasks[{index}]"
+        row = _object(value, path)
+        if set(row) != _FLEET_MODEL_TASK_FIELDS:
+            raise ProtocolError("fleet model task fields are invalid")
+        host_id = _uuid(row["hostId"], f"{path}.hostId")
+        identity = (host_id, _uuid(row["taskId"], f"{path}.taskId"))
+        host = host_rows.get(host_id)
+        if identity in task_ids or host is None:
+            raise ProtocolError("fleet model task identity is invalid")
+        task_ids.add(identity)
+        project_id = _uuid(row["projectId"], f"{path}.projectId")
+        if (
+            project_id not in project_ids
+            or host_id not in project_route_hosts[project_id]
+        ):
+            raise ProtocolError("fleet model task project is invalid")
+        if (
+            _string(row["projectName"], f"{path}.projectName", maximum=256)
+            != project_rows[project_id]["name"]
+        ):
+            raise ProtocolError("fleet model task project name is inconsistent")
+        _string(row["title"], f"{path}.title", maximum=256)
+        _optional_uuid(row, "checkoutId", path)
+        _optional_string(row, "checkoutName", path, maximum=256)
+        if row["checkoutKind"] is not None:
+            _enum(row["checkoutKind"], f"{path}.checkoutKind", _CHECKOUT_KINDS)
+        _optional_string(row, "checkoutBranch", path, maximum=1024)
+        _optional_string(row, "purpose", path, maximum=4096)
+        if row["preferredProvider"] is not None:
+            _provider(row["preferredProvider"], f"{path}.preferredProvider")
+        status = _enum(row["status"], f"{path}.status", _TASK_STATUSES)
+        if row["provider"] is not None:
+            _provider(row["provider"], f"{path}.provider")
+        if (status == "closed") != (row["closedAt"] is not None):
+            raise ProtocolError("fleet model task status is inconsistent")
+        if row["currentSessionKey"] is not None:
+            session_key, key_host, key_provider, _ = _session_key(
+                row["currentSessionKey"], f"{path}.currentSessionKey"
+            )
+            if (
+                key_host != host_id
+                or key_provider != row["provider"]
+                or session_key in assigned_session_keys
+            ):
+                raise ProtocolError("fleet model task session identity is invalid")
+            assigned_session_keys.add(session_key)
+        elif row["provider"] is not None:
+            raise ProtocolError("fleet model task provider requires a current session")
+        for field, allowed in (
+            ("runtimePresence", _RUNTIME_PRESENCE),
+            ("resumability", _RESUMABILITY),
+            ("activity", _ACTIVITY),
+            ("activityReason", _ACTIVITY_REASON),
+            ("attachment", _ATTACHMENT),
+            ("stateConfidence", _STATE_CONFIDENCE),
+            ("hostReachability", frozenset({"online", "offline", "unknown"})),
+        ):
+            _enum(row[field], f"{path}.{field}", allowed)
+        for field in ("pinned", "checkoutIsDefault", "canStop", "isLocal", "hostStale"):
+            _boolean(row[field], f"{path}.{field}")
+        for field in ("createdAt", "updatedAt", "recencyAt"):
+            _integer(row[field], f"{path}.{field}")
+        if row["closedAt"] is not None:
+            _integer(row["closedAt"], f"{path}.closedAt")
+        host_display_name = _string(
+            row["hostDisplayName"], f"{path}.hostDisplayName", maximum=256
+        )
+        if (
+            host_display_name != host["displayName"]
+            or row["isLocal"] != (host["source"] == "local")
+            or row["hostReachability"] != host["reachability"]
+            or row["hostStale"] != host["stale"]
+        ):
+            raise ProtocolError("fleet model task routing disagrees with its host")
+        if row["canStop"] and (
+            row["provider"] != "claude" or row["runtimePresence"] != "live"
+        ):
+            raise ProtocolError("fleet model task stop capability is inconsistent")
+    inbox = _array(
+        table["inboxSessions"], "model.inboxSessions", maximum=MAX_MODEL_SESSIONS
+    )
+    session_keys: set[str] = set()
+    for index, value in enumerate(inbox):
+        path = f"model.inboxSessions[{index}]"
+        row = _object(value, path)
+        if set(row) != _FLEET_MODEL_INBOX_FIELDS:
+            raise ProtocolError("fleet model Inbox fields are invalid")
+        key, key_host, provider, provider_id = _session_key(
+            row["sessionKey"], f"{path}.sessionKey"
+        )
+        host_id = _uuid(row["hostId"], f"{path}.hostId")
+        host = host_rows.get(host_id)
+        if (
+            key in session_keys
+            or key in assigned_session_keys
+            or key_host != host_id
+            or host is None
+        ):
+            raise ProtocolError("fleet model Inbox identity is invalid")
+        session_keys.add(key)
+        if provider != row["provider"] or provider_id != row["providerSessionId"]:
+            raise ProtocolError("fleet model Inbox provider identity is invalid")
+        project_id = _optional_uuid(row, "projectId", path)
+        project_name = _optional_string(row, "projectName", path, maximum=256)
+        if project_id is not None:
+            if project_name is None:
+                raise ProtocolError("fleet model Inbox project name is missing")
+            if project_id in project_rows and (
+                host_id not in project_route_hosts[project_id]
+                or project_name != project_rows[project_id]["name"]
+            ):
+                raise ProtocolError("fleet model Inbox project is invalid")
+        if project_id is None and project_name is not None:
+            raise ProtocolError("fleet model Inbox project name requires a project")
+        _optional_uuid(row, "checkoutId", path)
+        _optional_string(row, "checkoutName", path, maximum=256)
+        _optional_string(row, "name", path, maximum=512)
+        for field, allowed in (
+            ("runtimePresence", _RUNTIME_PRESENCE),
+            ("resumability", _RESUMABILITY),
+            ("activity", _ACTIVITY),
+            ("activityReason", _ACTIVITY_REASON),
+            ("attachment", _ATTACHMENT),
+            ("stateConfidence", _STATE_CONFIDENCE),
+            ("hostReachability", frozenset({"online", "offline", "unknown"})),
+        ):
+            _enum(row[field], f"{path}.{field}", allowed)
+        _integer(row["recencyAt"], f"{path}.recencyAt")
+        for field in ("canStop", "isLocal", "hostStale"):
+            _boolean(row[field], f"{path}.{field}")
+        host_display_name = _string(
+            row["hostDisplayName"], f"{path}.hostDisplayName", maximum=256
+        )
+        if (
+            host_display_name != host["displayName"]
+            or row["isLocal"] != (host["source"] == "local")
+            or row["hostReachability"] != host["reachability"]
+            or row["hostStale"] != host["stale"]
+        ):
+            raise ProtocolError("fleet model Inbox routing disagrees with its host")
+        if row["canStop"] and (
+            provider != "claude" or row["runtimePresence"] != "live"
+        ):
+            raise ProtocolError("fleet model Inbox stop capability is inconsistent")
+    warnings = _array(table["warnings"], "model.warnings", maximum=MAX_MODEL_WARNINGS)
+    for index, value in enumerate(warnings):
+        path = f"model.warnings[{index}]"
+        row = _object(value, path)
+        if not set(row).issubset(
+            {"hostId", "source", "provider", "code", "message", "retryable"}
+        ) or not {"hostId", "source", "code", "message", "retryable"}.issubset(row):
+            raise ProtocolError("fleet model warning fields are invalid")
+        if (
+            row["hostId"] is not None
+            and _uuid(row["hostId"], f"{path}.hostId") not in host_rows
+        ):
+            raise ProtocolError("fleet model warning host is invalid")
+        _enum(
+            row["source"],
+            f"{path}.source",
+            frozenset({"capability", "error", "fleet", "model"}),
+        )
+        if row.get("provider") is not None:
+            _provider(row["provider"], f"{path}.provider")
+        _string(row["code"], f"{path}.code", maximum=128)
+        _string(row["message"], f"{path}.message", maximum=4096)
+        _boolean(row["retryable"], f"{path}.retryable")
+    truncation = _object(table["truncation"], "model.truncation")
+    expected_truncation = {
+        "sourceHostCount",
+        "emittedHostCount",
+        "sourceTaskCount",
+        "emittedTaskCount",
+        "tasksTruncated",
+        "sourceInboxCount",
+        "emittedInboxCount",
+        "inboxTruncated",
+        "sessionLimit",
+    }
+    if set(truncation) != expected_truncation:
+        raise ProtocolError("fleet model truncation fields are invalid")
+    for field in expected_truncation - {"tasksTruncated", "inboxTruncated"}:
+        _integer(truncation[field], f"model.truncation.{field}")
+    _boolean(truncation["tasksTruncated"], "model.truncation.tasksTruncated")
+    _boolean(truncation["inboxTruncated"], "model.truncation.inboxTruncated")
+    if (
+        truncation["emittedHostCount"] != len(hosts)
+        or truncation["emittedTaskCount"] != len(tasks)
+        or truncation["emittedInboxCount"] != len(inbox)
+        or truncation["sourceHostCount"] < truncation["emittedHostCount"]
+        or truncation["sourceTaskCount"] < truncation["emittedTaskCount"]
+        or truncation["sourceInboxCount"] < truncation["emittedInboxCount"]
+        or not 1 <= truncation["sessionLimit"] <= MAX_MODEL_SESSIONS
+    ):
+        raise ProtocolError("fleet model truncation counts are inconsistent")
+    encoded = json.dumps(
+        table, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    ).encode("utf-8")
+    if len(encoded) > MAX_MODEL_BYTES:
+        raise ProtocolError("fleet model exceeds the encoded byte limit")
+    return table
+
+
+@dataclass(slots=True)
+class FleetModel:
+    value: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return deepcopy(_validate_fleet_model(deepcopy(self.value)))
+
+
+def parse_fleet(
+    raw: str | bytes | bytearray, *, max_sessions: int = MAX_MODEL_SESSIONS
+) -> FleetModel:
+    if (
+        isinstance(max_sessions, bool)
+        or not isinstance(max_sessions, int)
+        or not 1 <= max_sessions <= MAX_MODEL_SESSIONS
+    ):
+        raise ValueError(f"max_sessions must be between 1 and {MAX_MODEL_SESSIONS}")
+    fleet = _validated_fleet(raw)
+    host_rows: list[dict[str, Any]] = []
+    project_rows: dict[str, dict[str, Any]] = {}
+    task_rows: list[dict[str, Any]] = []
+    inbox_rows: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    source_task_count = 0
+    source_inbox_count = 0
+    source_tasks_truncated = False
+    source_inbox_truncated = False
+    for host in fleet["hosts"]:
+        host_id = host["hostId"]
+        is_local = host["source"] == "local"
+        host_rows.append(
+            {
+                "source": host["source"],
+                "remoteName": host["remoteName"],
+                "hostId": host_id,
+                "displayName": host["displayName"],
+                "reachability": host["reachability"],
+                "stale": host["stale"],
+                "hasSnapshot": host["snapshot"] is not None,
+                "error": host["error"],
+            }
+        )
+        if host["error"] is not None:
+            warnings.append(
+                {
+                    "hostId": host_id,
+                    "source": "fleet",
+                    "code": host["error"]["code"],
+                    "message": host["error"]["message"],
+                    "retryable": host["error"]["retryable"],
+                }
+            )
+        if host["snapshot"] is None:
+            continue
+        assert isinstance(host_id, str)
+        snapshot_model = host["snapshotModel"]
+        assert isinstance(snapshot_model, dict)
+        routing = {
+            "hostId": host_id,
+            "hostDisplayName": host["displayName"],
+            "isLocal": is_local,
+            "hostReachability": host["reachability"],
+            "hostStale": host["stale"],
+        }
+        for project in snapshot_model["projects"]:
+            row = project_rows.setdefault(
+                project["projectId"],
+                {
+                    "projectId": project["projectId"],
+                    "name": project["name"],
+                    "repositoryName": project["repositoryName"],
+                    "routes": [],
+                },
+            )
+            row["routes"].append(
+                {
+                    "hostId": host_id,
+                    "hostDisplayName": host["displayName"],
+                    "isLocal": is_local,
+                    "defaultProvider": project["defaultProvider"],
+                    "defaultCheckoutId": project["defaultCheckoutId"],
+                    "reachability": host["reachability"],
+                    "stale": host["stale"],
+                }
+            )
+        task_rows.extend({**task, **routing} for task in snapshot_model["tasks"])
+        inbox_rows.extend(
+            {**session, **routing} for session in snapshot_model["inboxSessions"]
+        )
+        source_task_count += snapshot_model["truncation"]["sourceTaskCount"]
+        source_inbox_count += snapshot_model["truncation"]["sourceInboxCount"]
+        source_tasks_truncated = (
+            source_tasks_truncated or snapshot_model["truncation"]["tasksTruncated"]
+        )
+        source_inbox_truncated = (
+            source_inbox_truncated or snapshot_model["truncation"]["inboxTruncated"]
+        )
+        warnings.extend(
+            {"hostId": host_id, **warning} for warning in snapshot_model["warnings"]
+        )
+    task_rows.sort(
+        key=lambda item: (
+            item["status"] == "closed",
+            not item["pinned"],
+            -item["recencyAt"],
+            item["hostId"],
+            item["taskId"],
+        )
+    )
+    task_rows, tasks_truncated = _bounded(
+        task_rows, count=MAX_MODEL_TASKS, byte_limit=MAX_MODEL_TASK_BYTES
+    )
+    inbox_rows.sort(key=lambda item: (-item["recencyAt"], item["sessionKey"]))
+    inbox_rows, inbox_truncated = _bounded(
+        inbox_rows, count=max_sessions, byte_limit=MAX_MODEL_INBOX_BYTES
+    )
+    projects = sorted(
+        project_rows.values(),
+        key=lambda item: (item["name"].casefold(), item["projectId"]),
+    )
+    for project in projects:
+        project["routes"].sort(key=lambda item: (not item["isLocal"], item["hostId"]))
+    projects, projects_truncated = _bounded(
+        projects, count=MAX_MODEL_PROJECTS, byte_limit=MAX_MODEL_PROJECT_BYTES
+    )
+    emitted_projects = {project["projectId"] for project in projects}
+    retained_tasks = [
+        task for task in task_rows if task["projectId"] in emitted_projects
+    ]
+    tasks_truncated = tasks_truncated or len(retained_tasks) != len(task_rows)
+    task_rows = retained_tasks
+    warnings, warnings_truncated = _bounded(
+        warnings,
+        count=MAX_MODEL_WARNINGS - 3,
+        byte_limit=MAX_MODEL_WARNING_BYTES,
+    )
+    for truncated, code, message in (
+        (
+            projects_truncated,
+            "model_projects_truncated",
+            "The fleet model omitted projects to remain bounded.",
+        ),
+        (
+            tasks_truncated or source_tasks_truncated,
+            "model_tasks_truncated",
+            "The fleet model omitted tasks to remain bounded.",
+        ),
+        (
+            inbox_truncated or source_inbox_truncated,
+            "model_inbox_truncated",
+            "The fleet model omitted Inbox sessions to remain bounded.",
+        ),
+        (
+            warnings_truncated,
+            "model_diagnostics_truncated",
+            "The fleet model omitted diagnostics to remain bounded.",
+        ),
+    ):
+        if truncated and len(warnings) < MAX_MODEL_WARNINGS:
+            warnings.append(
+                {
+                    "hostId": None,
+                    "source": "model",
+                    "code": code,
+                    "message": message,
+                    "retryable": False,
+                }
+            )
+    value = {
+        "modelVersion": FLEET_MODEL_VERSION,
+        "sourceSchemaVersion": SCHEMA_VERSION,
+        "sourceProtocolVersion": PROTOCOL_VERSION,
+        "sourceFleetVersion": FLEET_VERSION,
+        "generatedAt": fleet["generatedAt"],
+        "localHostId": fleet["localHostId"],
+        "hosts": host_rows,
+        "projects": projects,
+        "tasks": task_rows,
+        "inboxSessions": inbox_rows,
+        "warnings": warnings,
+        "truncation": {
+            "sourceHostCount": len(fleet["hosts"]),
+            "emittedHostCount": len(host_rows),
+            "sourceTaskCount": source_task_count,
+            "emittedTaskCount": len(task_rows),
+            "tasksTruncated": tasks_truncated or source_tasks_truncated,
+            "sourceInboxCount": source_inbox_count,
+            "emittedInboxCount": len(inbox_rows),
+            "inboxTruncated": inbox_truncated or source_inbox_truncated,
+            "sessionLimit": max_sessions,
+        },
+    }
+    model = FleetModel(value)
     model.to_dict()
     return model

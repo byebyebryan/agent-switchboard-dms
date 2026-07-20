@@ -9,11 +9,11 @@ import unittest
 
 from switchboard_dms.bridge import (
     MAX_BRIDGE_BYTES,
+    fleet_argv,
     prepare_history_argv,
     prepare_open_argv,
     prepare_task_argv,
     serialize_response,
-    snapshot_argv,
     stop_session_argv,
 )
 
@@ -34,22 +34,29 @@ SURFACE_ID = "33333333-3333-4333-8333-333333333333"
 
 
 class BridgeArgumentTests(unittest.TestCase):
-    def test_snapshot_argv_is_exact(self) -> None:
+    def test_fleet_argv_is_exact(self) -> None:
         self.assertEqual(
-            snapshot_argv("swbctl", refresh=False), ["swbctl", "snapshot", "--json"]
+            fleet_argv("swbctl", refresh=False), ["swbctl", "fleet", "--json"]
         )
         self.assertEqual(
-            snapshot_argv("swbctl", refresh=True),
-            ["swbctl", "snapshot", "--reconcile", "full", "--json"],
+            fleet_argv("swbctl", refresh=True),
+            ["swbctl", "fleet", "--refresh", "--json"],
         )
 
     def test_prepare_open_argv_is_exact(self) -> None:
         self.assertEqual(
-            prepare_open_argv("swbctl", session_key=SESSION_KEY, request_id=REQUEST_ID),
+            prepare_open_argv(
+                "swbctl",
+                session_key=SESSION_KEY,
+                host_id=HOST_ID,
+                request_id=REQUEST_ID,
+            ),
             [
                 "swbctl",
                 "prepare-open",
                 SESSION_KEY,
+                "--host",
+                HOST_ID,
                 "--request-id",
                 REQUEST_ID,
                 "--can-focus-desktop",
@@ -60,11 +67,15 @@ class BridgeArgumentTests(unittest.TestCase):
 
     def test_prepare_existing_and_create_task_argv_are_exact(self) -> None:
         self.assertEqual(
-            prepare_task_argv("swbctl", task_id=TASK_ID, request_id=REQUEST_ID),
+            prepare_task_argv(
+                "swbctl", task_id=TASK_ID, host_id=HOST_ID, request_id=REQUEST_ID
+            ),
             [
                 "swbctl",
                 "prepare-task",
                 TASK_ID,
+                "--host",
+                HOST_ID,
                 "--request-id",
                 REQUEST_ID,
                 "--can-focus-desktop",
@@ -76,6 +87,7 @@ class BridgeArgumentTests(unittest.TestCase):
             prepare_task_argv(
                 "swbctl",
                 task_id=TASK_ID,
+                host_id=HOST_ID,
                 create=True,
                 project_id=PROJECT_ID,
                 title="Fix picker layout",
@@ -87,6 +99,8 @@ class BridgeArgumentTests(unittest.TestCase):
                 "swbctl",
                 "prepare-task",
                 TASK_ID,
+                "--host",
+                HOST_ID,
                 "--create",
                 "--project",
                 PROJECT_ID,
@@ -109,6 +123,7 @@ class BridgeArgumentTests(unittest.TestCase):
             prepare_history_argv(
                 "swbctl",
                 project_id=PROJECT_ID,
+                host_id=HOST_ID,
                 checkout_id=CHECKOUT_ID,
                 request_id=REQUEST_ID,
             ),
@@ -117,6 +132,8 @@ class BridgeArgumentTests(unittest.TestCase):
                 "prepare-history",
                 "--project",
                 PROJECT_ID,
+                "--host",
+                HOST_ID,
                 "--checkout",
                 CHECKOUT_ID,
                 "--request-id",
@@ -127,8 +144,15 @@ class BridgeArgumentTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            stop_session_argv("swbctl", session_key=CLAUDE_KEY),
-            ["swbctl", "stop-session", CLAUDE_KEY, "--json"],
+            stop_session_argv("swbctl", session_key=CLAUDE_KEY, host_id=HOST_ID),
+            [
+                "swbctl",
+                "stop-session",
+                CLAUDE_KEY,
+                "--host",
+                HOST_ID,
+                "--json",
+            ],
         )
 
 
@@ -136,6 +160,36 @@ class BridgeCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.temp = Path(self.temporary_directory.name)
+        snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+        self.fleet = self.temp / "fleet.json"
+        self.fleet.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "protocolVersion": 2,
+                    "fleetVersion": 1,
+                    "generatedAt": snapshot["generatedAt"] + 1,
+                    "localHostId": HOST_ID,
+                    "hosts": [
+                        {
+                            "source": "local",
+                            "remoteName": None,
+                            "hostId": HOST_ID,
+                            "displayName": snapshot["host"]["displayName"],
+                            "reachability": "online",
+                            "snapshotObservedAt": snapshot["generatedAt"],
+                            "snapshotReceivedAt": snapshot["generatedAt"] + 1,
+                            "lastAttemptAt": snapshot["generatedAt"] + 1,
+                            "stale": False,
+                            "error": None,
+                            "snapshot": snapshot,
+                        }
+                    ],
+                },
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -165,12 +219,12 @@ class BridgeCliTests(unittest.TestCase):
         self,
         executable: Path | str,
         *arguments: str,
-        output: Path = SNAPSHOT,
+        output: Path | None = None,
         timeout: float = 5,
         extra: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         environment = os.environ.copy()
-        environment["FAKE_OUTPUT"] = str(output)
+        environment["FAKE_OUTPUT"] = str(self.fleet if output is None else output)
         if extra:
             environment.update(extra)
         return subprocess.run(
@@ -210,18 +264,18 @@ class BridgeCliTests(unittest.TestCase):
         self.assertEqual(value["error"]["code"], code)
         return value
 
-    def test_snapshot_success_is_model_v3_and_shell_free(self) -> None:
+    def test_fleet_success_is_model_v4_and_shell_free(self) -> None:
         arguments = self.temp / "arguments"
         marker = self.temp / "shell-used"
         executable = self.fixture_executable(name="fake swbctl; touch shell-used")
         result = self.run_bridge(executable, extra={"FAKE_ARGUMENTS": str(arguments)})
         value = self.payload(result)
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(value["bridgeVersion"], 2)
-        self.assertEqual(value["model"]["modelVersion"], 3)
+        self.assertEqual(value["bridgeVersion"], 3)
+        self.assertEqual(value["model"]["modelVersion"], 4)
         self.assertEqual(len(value["model"]["tasks"]), 2)
         self.assertEqual(len(value["model"]["inboxSessions"]), 1)
-        self.assertEqual(arguments.read_text(encoding="utf-8"), "snapshot\n--json")
+        self.assertEqual(arguments.read_text(encoding="utf-8"), "fleet\n--json")
         self.assertFalse(marker.exists())
 
     def test_refresh_and_create_task_cli_forward_exact_argv(self) -> None:
@@ -232,12 +286,14 @@ class BridgeCliTests(unittest.TestCase):
         )
         self.assertEqual(refreshed.returncode, 0)
         self.assertEqual(
-            arguments.read_text(encoding="utf-8"), "snapshot\n--reconcile\nfull\n--json"
+            arguments.read_text(encoding="utf-8"), "fleet\n--refresh\n--json"
         )
         created = self.run_bridge(
             executable,
             "--prepare-task",
             TASK_ID,
+            "--host",
+            HOST_ID,
             "--create-task",
             "--project",
             PROJECT_ID,
@@ -260,6 +316,8 @@ class BridgeCliTests(unittest.TestCase):
                 [
                     "prepare-task",
                     TASK_ID,
+                    "--host",
+                    HOST_ID,
                     "--create",
                     "--project",
                     PROJECT_ID,
@@ -281,16 +339,32 @@ class BridgeCliTests(unittest.TestCase):
     def test_existing_task_open_history_and_inbox_prepare_are_supported(self) -> None:
         executable = self.fixture_executable()
         for arguments in (
-            ("--prepare-task", TASK_ID, "--request-id", REQUEST_ID),
+            (
+                "--prepare-task",
+                TASK_ID,
+                "--host",
+                HOST_ID,
+                "--request-id",
+                REQUEST_ID,
+            ),
             (
                 "--prepare-history",
                 PROJECT_ID,
+                "--host",
+                HOST_ID,
                 "--checkout",
                 CHECKOUT_ID,
                 "--request-id",
                 REQUEST_ID,
             ),
-            ("--prepare-open", SESSION_KEY, "--request-id", REQUEST_ID),
+            (
+                "--prepare-open",
+                SESSION_KEY,
+                "--host",
+                HOST_ID,
+                "--request-id",
+                REQUEST_ID,
+            ),
         ):
             with self.subTest(arguments=arguments):
                 result = self.run_bridge(executable, *arguments, output=PLAN)
@@ -316,12 +390,23 @@ class BridgeCliTests(unittest.TestCase):
             encoding="utf-8",
         )
         stopped = self.run_bridge(
-            self.fixture_executable(), "--stop-session", CLAUDE_KEY, output=stop_output
+            self.fixture_executable(),
+            "--stop-session",
+            CLAUDE_KEY,
+            "--host",
+            HOST_ID,
+            output=stop_output,
         )
         self.assertEqual(self.payload(stopped)["action"]["status"], "stopped")
         silent = self.executable("import sys\nsys.exit(0)\n")
         selected = self.run_bridge(
-            silent, "--select-surface", SURFACE_ID, "--tmux-client", "/dev/pts/7"
+            silent,
+            "--select-surface",
+            SURFACE_ID,
+            "--host",
+            HOST_ID,
+            "--tmux-client",
+            "/dev/pts/7",
         )
         self.assertEqual(
             self.payload(selected)["action"],
@@ -331,12 +416,12 @@ class BridgeCliTests(unittest.TestCase):
     def test_v1_invalid_utf8_nonzero_timeout_and_overflow_are_bounded(self) -> None:
         executable = self.fixture_executable()
         self.assert_error(
-            self.run_bridge(executable, output=V1), "snapshot_invalid_protocol"
+            self.run_bridge(executable, output=V1), "fleet_invalid_protocol"
         )
         invalid = self.temp / "invalid"
         invalid.write_bytes(b"\xff")
         self.assert_error(
-            self.run_bridge(executable, output=invalid), "snapshot_invalid_utf8"
+            self.run_bridge(executable, output=invalid), "fleet_invalid_utf8"
         )
         nonzero = self.executable(
             "import sys\nsys.stderr.write('private')\nsys.exit(9)\n"
@@ -389,12 +474,12 @@ def encode(value: object) -> str:
 class BridgeSerializationTests(unittest.TestCase):
     def test_overflow_and_serialization_failures_are_managed(self) -> None:
         exit_code, output = serialize_response(
-            {"bridgeVersion": 2, "ok": True, "model": {"value": "x" * MAX_BRIDGE_BYTES}}
+            {"bridgeVersion": 3, "ok": True, "model": {"value": "x" * MAX_BRIDGE_BYTES}}
         )
         self.assertEqual(exit_code, 1)
         self.assertEqual(json.loads(output)["error"]["code"], "bridge_output_overflow")
         exit_code, output = serialize_response(
-            {"bridgeVersion": 2, "ok": True, "model": {"bad": object()}}
+            {"bridgeVersion": 3, "ok": True, "model": {"bad": object()}}
         )
         self.assertEqual(exit_code, 1)
         self.assertEqual(

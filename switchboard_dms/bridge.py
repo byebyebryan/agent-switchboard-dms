@@ -1,4 +1,4 @@
-"""Stable JSON bridge between DMS and the public ``swbctl`` snapshot CLI."""
+"""Stable JSON bridge between DMS and the public ``swbctl`` Fleet/actions CLI."""
 
 from __future__ import annotations
 
@@ -16,19 +16,19 @@ from .protocol import (
     MAX_JSON_BYTES,
     MAX_MODEL_SESSIONS,
     ProtocolError,
+    parse_fleet,
     parse_presentation_plan,
     parse_session_action,
-    parse_snapshot,
 )
 
-BRIDGE_VERSION = 2
+BRIDGE_VERSION = 3
 DEFAULT_TIMEOUT_MS = 10_000
 MIN_TIMEOUT_MS = 100
 MAX_TIMEOUT_MS = 60_000
 DEFAULT_MAX_SESSIONS = MAX_MODEL_SESSIONS
 MAX_BRIDGE_BYTES = MAX_JSON_BYTES
 _INTERNAL_ERROR_PAYLOAD = (
-    b'{"bridgeVersion":2,"error":{"code":"bridge_internal_error",'
+    b'{"bridgeVersion":3,"error":{"code":"bridge_internal_error",'
     b'"message":"The bridge encountered an internal error.",'
     b'"retryable":false},"ok":false}\n'
 )
@@ -48,16 +48,17 @@ class BridgeError:
         }
 
 
-def snapshot_argv(executable: str, *, refresh: bool) -> list[str]:
+def fleet_argv(executable: str, *, refresh: bool) -> list[str]:
     if refresh:
-        return [executable, "snapshot", "--reconcile", "full", "--json"]
-    return [executable, "snapshot", "--json"]
+        return [executable, "fleet", "--refresh", "--json"]
+    return [executable, "fleet", "--json"]
 
 
 def prepare_open_argv(
     executable: str,
     *,
     session_key: str,
+    host_id: str,
     request_id: str,
     can_focus_desktop: bool = True,
     can_launch_terminal: bool = True,
@@ -66,6 +67,8 @@ def prepare_open_argv(
         executable,
         "prepare-open",
         session_key,
+        "--host",
+        host_id,
         "--request-id",
         request_id,
     ]
@@ -81,6 +84,7 @@ def prepare_task_argv(
     executable: str,
     *,
     task_id: str,
+    host_id: str,
     request_id: str,
     create: bool = False,
     project_id: str | None = None,
@@ -94,6 +98,8 @@ def prepare_task_argv(
         executable,
         "prepare-task",
         task_id,
+        "--host",
+        host_id,
     ]
     if create:
         assert project_id is not None and title is not None and provider is not None
@@ -129,6 +135,7 @@ def prepare_history_argv(
     executable: str,
     *,
     project_id: str,
+    host_id: str,
     checkout_id: str | None,
     request_id: str,
     can_focus_desktop: bool = True,
@@ -139,6 +146,8 @@ def prepare_history_argv(
         "prepare-history",
         "--project",
         project_id,
+        "--host",
+        host_id,
     ]
     if checkout_id is not None:
         argv.extend(["--checkout", checkout_id])
@@ -151,17 +160,19 @@ def prepare_history_argv(
     return argv
 
 
-def stop_session_argv(executable: str, *, session_key: str) -> list[str]:
-    return [executable, "stop-session", session_key, "--json"]
+def stop_session_argv(executable: str, *, session_key: str, host_id: str) -> list[str]:
+    return [executable, "stop-session", session_key, "--host", host_id, "--json"]
 
 
 def select_surface_argv(
-    executable: str, *, surface_id: str, tmux_client: str
+    executable: str, *, surface_id: str, host_id: str, tmux_client: str
 ) -> list[str]:
     return [
         executable,
         "select-surface",
         surface_id,
+        "--host",
+        host_id,
         "--client",
         tmux_client,
     ]
@@ -210,7 +221,7 @@ def _json_syntax_is_valid(text: str) -> bool:
     return True
 
 
-def _snapshot_payload(stdout: bytes) -> bytes:
+def _json_payload(stdout: bytes, *, invalid_code: str, invalid_message: str) -> bytes:
     """Return the JSON bytes from the bridge's strict single-record framing.
 
     ``swbctl`` may omit its final LF or emit exactly one. JSON whitespace is
@@ -225,8 +236,8 @@ def _snapshot_payload(stdout: bytes) -> bytes:
     json_whitespace = b" \t\r\n"
     if not payload or payload[:1] in json_whitespace or payload[-1:] in json_whitespace:
         raise ProcessRunError(
-            "snapshot_invalid_json",
-            "swbctl stdout was not one JSON document.",
+            invalid_code,
+            invalid_message,
             retryable=False,
         )
     if len(payload) > MAX_JSON_BYTES:
@@ -258,6 +269,7 @@ def run_bridge(
     select_surface: str | None = None,
     tmux_client: str | None = None,
     stop_session: str | None = None,
+    action_host_id: str | None = None,
 ) -> dict[str, object]:
     try:
         if any(
@@ -265,10 +277,12 @@ def run_bridge(
             for target in (prepare_open, prepare_task, prepare_history)
         ):
             assert request_id is not None
+            assert action_host_id is not None
             if prepare_open is not None:
                 argv = prepare_open_argv(
                     executable,
                     session_key=prepare_open,
+                    host_id=action_host_id,
                     request_id=request_id,
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
@@ -277,6 +291,7 @@ def run_bridge(
                 argv = prepare_task_argv(
                     executable,
                     task_id=prepare_task,
+                    host_id=action_host_id,
                     create=create_task,
                     project_id=project_id,
                     title=task_title,
@@ -291,6 +306,7 @@ def run_bridge(
                 argv = prepare_history_argv(
                     executable,
                     project_id=prepare_history,
+                    host_id=action_host_id,
                     checkout_id=checkout_id,
                     request_id=request_id,
                     can_focus_desktop=prepare_can_focus_desktop,
@@ -308,7 +324,11 @@ def run_bridge(
                         True,
                     )
                 )
-            payload = _snapshot_payload(output.stdout)
+            payload = _json_payload(
+                output.stdout,
+                invalid_code="plan_invalid_protocol",
+                invalid_message="swbctl stdout was not one PresentationPlan document.",
+            )
             try:
                 plan = parse_presentation_plan(payload)
             except ProtocolError:
@@ -322,8 +342,13 @@ def run_bridge(
             return _plan_success(plan)
 
         if stop_session is not None:
+            assert action_host_id is not None
             output = run_process(
-                stop_session_argv(executable, session_key=stop_session),
+                stop_session_argv(
+                    executable,
+                    session_key=stop_session,
+                    host_id=action_host_id,
+                ),
                 timeout_ms=timeout_ms,
             )
             if output.exit_code != 0:
@@ -334,7 +359,11 @@ def run_bridge(
                         True,
                     )
                 )
-            payload = _snapshot_payload(output.stdout)
+            payload = _json_payload(
+                output.stdout,
+                invalid_code="action_invalid_protocol",
+                invalid_message="swbctl stdout was not one SessionAction document.",
+            )
             try:
                 action = parse_session_action(payload)
             except ProtocolError:
@@ -352,11 +381,12 @@ def run_bridge(
             }
 
         if select_surface is not None:
-            assert tmux_client is not None
+            assert tmux_client is not None and action_host_id is not None
             output = run_process(
                 select_surface_argv(
                     executable,
                     surface_id=select_surface,
+                    host_id=action_host_id,
                     tmux_client=tmux_client,
                 ),
                 timeout_ms=timeout_ms,
@@ -380,7 +410,7 @@ def run_bridge(
             return _action_success(select_surface)
 
         output = run_process(
-            snapshot_argv(executable, refresh=refresh),
+            fleet_argv(executable, refresh=refresh),
             timeout_ms=timeout_ms,
         )
         if output.exit_code != 0:
@@ -392,13 +422,17 @@ def run_bridge(
                 )
             )
 
-        payload = _snapshot_payload(output.stdout)
+        payload = _json_payload(
+            output.stdout,
+            invalid_code="fleet_invalid_json",
+            invalid_message="swbctl stdout was not one Fleet document.",
+        )
         try:
             text = payload.decode("utf-8")
         except UnicodeDecodeError:
             return _failure(
                 BridgeError(
-                    "snapshot_invalid_utf8",
+                    "fleet_invalid_utf8",
                     "swbctl stdout was not valid UTF-8.",
                     False,
                 )
@@ -406,18 +440,18 @@ def run_bridge(
         if not _json_syntax_is_valid(text):
             return _failure(
                 BridgeError(
-                    "snapshot_invalid_json",
+                    "fleet_invalid_json",
                     "swbctl stdout was not valid JSON.",
                     False,
                 )
             )
         try:
-            model = parse_snapshot(text, max_sessions=max_sessions)
+            model = parse_fleet(text, max_sessions=max_sessions)
         except ProtocolError:
             return _failure(
                 BridgeError(
-                    "snapshot_invalid_protocol",
-                    "swbctl stdout was not a compatible Snapshot v2 document.",
+                    "fleet_invalid_protocol",
+                    "swbctl stdout was not a compatible Fleet v1 document.",
                     False,
                 )
             )
@@ -504,20 +538,18 @@ def _uuid(value: str) -> str:
 def _session_key(value: str) -> str:
     parts = value.split(":")
     if len(parts) != 3 or parts[1] not in {"codex", "claude"}:
-        raise argparse.ArgumentTypeError("expected a canonical local session key")
+        raise argparse.ArgumentTypeError("expected a canonical session key")
     _uuid(parts[0])
     _uuid(parts[2])
     if len(value) > 512:
-        raise argparse.ArgumentTypeError("expected a canonical local session key")
+        raise argparse.ArgumentTypeError("expected a canonical session key")
     return value
 
 
 def _claude_session_key(value: str) -> str:
     parsed = _session_key(value)
     if parsed.split(":", 2)[1] != "claude":
-        raise argparse.ArgumentTypeError(
-            "expected a canonical local Claude session key"
-        )
+        raise argparse.ArgumentTypeError("expected a canonical Claude session key")
     return parsed
 
 
@@ -545,7 +577,7 @@ def _task_title(value: str) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="switchboard-bridge",
-        description="Read and validate one bounded Switchboard snapshot.",
+        description="Read and validate one bounded Switchboard fleet.",
     )
     parser.add_argument("--swbctl", default="swbctl", type=_executable)
     parser.add_argument("--refresh", action="store_true")
@@ -560,6 +592,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--title", type=_task_title)
     parser.add_argument("--checkout", type=_uuid)
     parser.add_argument("--provider", choices=("codex", "claude"))
+    parser.add_argument("--host", type=_uuid)
     parser.add_argument("--request-id", type=_uuid)
     parser.add_argument("--tmux-client", type=_tmux_client)
     parser.add_argument(
@@ -608,6 +641,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if preparing != (args.request_id is not None):
         parser.error("a prepare action and --request-id must be supplied together")
+    acting = (
+        preparing or args.select_surface is not None or args.stop_session is not None
+    )
+    if acting != (args.host is not None):
+        parser.error("an owning-host action and --host must be supplied together")
     if args.create_task and args.prepare_task is None:
         parser.error("--create-task requires --prepare-task")
     if args.create_task and (
@@ -639,7 +677,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (
         preparing or args.select_surface is not None or args.stop_session is not None
     ) and args.refresh:
-        parser.error("--refresh applies only to snapshot reads")
+        parser.error("--refresh applies only to fleet reads")
     try:
         response = run_bridge(
             executable=args.swbctl,
@@ -658,6 +696,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             select_surface=args.select_surface,
             tmux_client=args.tmux_client,
             stop_session=args.stop_session,
+            action_host_id=args.host,
         )
     except Exception:
         response = _internal_failure()

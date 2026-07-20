@@ -9,6 +9,7 @@ from switchboard_dms.protocol import (
     MAX_MODEL_PROJECTS,
     MAX_MODEL_SESSIONS,
     ProtocolError,
+    parse_fleet,
     parse_presentation_plan,
     parse_session_action,
     parse_snapshot,
@@ -24,6 +25,7 @@ PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 TASK_ID = "88888888-8888-4888-8888-888888888888"
 CHECKOUT_ID = "44444444-4444-4444-8444-444444444444"
 CLAUDE_KEY = f"{HOST_ID}:claude:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+REMOTE_HOST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 
 def fixture() -> dict[str, object]:
@@ -32,6 +34,127 @@ def fixture() -> dict[str, object]:
 
 def encode(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def fleet_fixture() -> dict[str, object]:
+    local = fixture()
+    remote = json.loads(encode(local).replace(HOST_ID, REMOTE_HOST_ID))
+    remote["host"]["displayName"] = "snap"
+    remote["generatedAt"] -= 10
+    return {
+        "schemaVersion": 2,
+        "protocolVersion": 2,
+        "fleetVersion": 1,
+        "generatedAt": local["generatedAt"] + 1,
+        "localHostId": HOST_ID,
+        "hosts": [
+            {
+                "source": "local",
+                "remoteName": None,
+                "hostId": HOST_ID,
+                "displayName": local["host"]["displayName"],
+                "reachability": "online",
+                "snapshotObservedAt": local["generatedAt"],
+                "snapshotReceivedAt": local["generatedAt"] + 1,
+                "lastAttemptAt": local["generatedAt"] + 1,
+                "stale": False,
+                "error": None,
+                "snapshot": local,
+            },
+            {
+                "source": "remote",
+                "remoteName": "snap",
+                "hostId": REMOTE_HOST_ID,
+                "displayName": "snap",
+                "reachability": "offline",
+                "snapshotObservedAt": remote["generatedAt"],
+                "snapshotReceivedAt": local["generatedAt"],
+                "lastAttemptAt": local["generatedAt"] + 1,
+                "stale": True,
+                "error": {
+                    "code": "ssh_failed",
+                    "message": "The remote host is unavailable.",
+                    "retryable": True,
+                },
+                "snapshot": remote,
+            },
+        ],
+    }
+
+
+class FleetProjectionTests(unittest.TestCase):
+    def test_fleet_merges_projects_and_qualifies_host_owned_rows(self) -> None:
+        model = parse_fleet(encode(fleet_fixture())).to_dict()
+        self.assertEqual(model["modelVersion"], 4)
+        self.assertEqual(model["sourceFleetVersion"], 1)
+        self.assertEqual(len(model["hosts"]), 2)
+        self.assertEqual(len(model["projects"]), 1)
+        self.assertEqual(len(model["projects"][0]["routes"]), 2)
+        self.assertEqual(
+            {(task["hostId"], task["taskId"]) for task in model["tasks"]},
+            {
+                (HOST_ID, TASK_ID),
+                (REMOTE_HOST_ID, TASK_ID),
+                (HOST_ID, "99999999-9999-4999-8999-999999999999"),
+                (REMOTE_HOST_ID, "99999999-9999-4999-8999-999999999999"),
+            },
+        )
+        remote_task = next(
+            task for task in model["tasks"] if task["hostId"] == REMOTE_HOST_ID
+        )
+        self.assertEqual(remote_task["hostReachability"], "offline")
+        self.assertTrue(remote_task["hostStale"])
+        self.assertIn("ssh_failed", {row["code"] for row in model["warnings"]})
+
+    def test_fleet_accepts_never_seen_remote_without_inventing_rows(self) -> None:
+        value = fleet_fixture()
+        value["hosts"][1] = {
+            "source": "remote",
+            "remoteName": "snap",
+            "hostId": None,
+            "displayName": "snap",
+            "reachability": "unknown",
+            "snapshotObservedAt": None,
+            "snapshotReceivedAt": None,
+            "lastAttemptAt": None,
+            "stale": True,
+            "error": None,
+            "snapshot": None,
+        }
+        model = parse_fleet(encode(value)).to_dict()
+        self.assertEqual(len(model["hosts"]), 2)
+        self.assertEqual(len(model["tasks"]), 2)
+        self.assertFalse(any(task["hostId"] is None for task in model["tasks"]))
+
+    def test_fleet_rejects_version_order_and_snapshot_identity_conflicts(self) -> None:
+        for mutate in (
+            lambda value: value.__setitem__("fleetVersion", 2),
+            lambda value: value["hosts"].reverse(),
+            lambda value: value["hosts"][1].__setitem__("hostId", HOST_ID),
+            lambda value: value["hosts"][1].__setitem__(
+                "snapshotObservedAt", value["hosts"][1]["snapshotObservedAt"] + 1
+            ),
+        ):
+            value = fleet_fixture()
+            mutate(value)
+            with self.subTest(mutate=mutate), self.assertRaises(ProtocolError):
+                parse_fleet(encode(value))
+
+    def test_fleet_model_is_revalidated_after_routing_mutation(self) -> None:
+        mutations = (
+            lambda value: value["tasks"][0].__setitem__(
+                "hostDisplayName", "wrong-host"
+            ),
+            lambda value: value["projects"][0]["routes"][0].__setitem__(
+                "reachability", "offline"
+            ),
+            lambda value: value["warnings"].append({"message": "unroutable"}),
+        )
+        for mutate in mutations:
+            model = parse_fleet(encode(fleet_fixture()))
+            mutate(model.value)
+            with self.subTest(mutate=mutate), self.assertRaises(ProtocolError):
+                model.to_dict()
 
 
 class PresentationPlanTests(unittest.TestCase):

@@ -6,11 +6,11 @@ const path = require("path")
 const vm = require("vm")
 
 const root = path.resolve(__dirname, "..")
-const source = fs.readFileSync(path.join(root, "SwitchboardModelV3.js"), "utf8")
+const source = fs.readFileSync(path.join(root, "SwitchboardModelV4.js"), "utf8")
     .replace(/^\.pragma library\s*$/m, "")
 const modelApi = {}
 vm.createContext(modelApi)
-vm.runInContext(source, modelApi, { filename: "SwitchboardModelV3.js" })
+vm.runInContext(source, modelApi, { filename: "SwitchboardModelV4.js" })
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111"
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222"
@@ -18,14 +18,22 @@ const CHECKOUT_ID = "44444444-4444-4444-8444-444444444444"
 const TASK_ID = "88888888-8888-4888-8888-888888888888"
 const CODEX_SESSION = `${HOST_ID}:codex:55555555-5555-4555-8555-555555555555`
 const CLAUDE_SESSION = `${HOST_ID}:claude:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`
+const REMOTE_HOST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 function project(overrides = {}) {
     return Object.assign({
         projectId: PROJECT_ID,
         name: "Agent Switchboard",
         repositoryName: "agent-switchboard",
-        defaultProvider: "codex",
-        defaultCheckoutId: CHECKOUT_ID
+        routes: [{
+            hostId: HOST_ID,
+            hostDisplayName: "starship",
+            isLocal: true,
+            defaultProvider: "codex",
+            defaultCheckoutId: CHECKOUT_ID,
+            reachability: "online",
+            stale: false
+        }]
     }, overrides)
 }
 
@@ -56,7 +64,12 @@ function task(overrides = {}) {
         attachment: "detached",
         stateConfidence: "confirmed",
         recencyAt: 100000,
-        canStop: false
+        canStop: false,
+        hostId: HOST_ID,
+        hostDisplayName: "starship",
+        isLocal: true,
+        hostReachability: "online",
+        hostStale: false
     }, overrides)
 }
 
@@ -77,26 +90,41 @@ function inbox(overrides = {}) {
         attachment: "detached",
         stateConfidence: "confirmed",
         recencyAt: 95000,
-        canStop: true
+        canStop: true,
+        hostId: HOST_ID,
+        hostDisplayName: "starship",
+        isLocal: true,
+        hostReachability: "online",
+        hostStale: false
     }, overrides)
 }
 
 function model(overrides = {}) {
     return Object.assign({
-        modelVersion: 3,
+        modelVersion: 4,
         sourceSchemaVersion: 2,
         sourceProtocolVersion: 2,
+        sourceFleetVersion: 1,
         generatedAt: 100000,
-        host: { hostId: HOST_ID, displayName: "starship" },
+        localHostId: HOST_ID,
+        hosts: [{ source: "local", remoteName: null, hostId: HOST_ID,
+            displayName: "starship", reachability: "online", stale: false,
+            hasSnapshot: true, error: null }],
         projects: [project()],
         tasks: [task()],
         inboxSessions: [inbox()],
-        capabilities: [
-            { provider: "codex", status: "available", available: true, features: [], degradedReasons: [] },
-            { provider: "claude", status: "available", available: true, features: [], degradedReasons: [] }
-        ],
         warnings: [],
-        truncation: {}
+        truncation: {
+            sourceHostCount: 1,
+            emittedHostCount: 1,
+            sourceTaskCount: 1,
+            emittedTaskCount: 1,
+            tasksTruncated: false,
+            sourceInboxCount: 1,
+            emittedInboxCount: 1,
+            inboxTruncated: false,
+            sessionLimit: 1000
+        }
     }, overrides)
 }
 
@@ -114,9 +142,9 @@ function kinds(items, kind) {
 }
 
 {
-    const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 2, ok: true, model: model() }))
+    const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 3, ok: true, model: model() }))
     assert.strictEqual(parsed.ok, true)
-    assert.strictEqual(parsed.model.modelVersion, 3)
+    assert.strictEqual(parsed.model.modelVersion, 4)
 }
 
 {
@@ -140,6 +168,48 @@ function kinds(items, kind) {
     assert.strictEqual(tasks[0].comment.includes("/work"), false)
     assert.strictEqual(kinds(items, "session").length, 0)
     assert.strictEqual(kinds(items, "status").some(item => item.id === "switchboard:status:inbox-summary"), true)
+}
+
+{
+    const remoteSession = `${REMOTE_HOST_ID}:codex:55555555-5555-4555-8555-555555555555`
+    const remoteHost = { source: "remote", remoteName: "snap", hostId: REMOTE_HOST_ID,
+        displayName: "snap", reachability: "offline", stale: true,
+        hasSnapshot: true, error: { code: "ssh_failed", message: "Unavailable", retryable: true } }
+    const remoteRoute = {
+        hostId: REMOTE_HOST_ID, hostDisplayName: "snap", isLocal: false,
+        defaultProvider: "codex", defaultCheckoutId: CHECKOUT_ID,
+        reachability: "offline", stale: true
+    }
+    const remoteTask = task({
+        currentSessionKey: remoteSession,
+        hostId: REMOTE_HOST_ID,
+        hostDisplayName: "snap",
+        isLocal: false,
+        hostReachability: "offline",
+        hostStale: true
+    })
+    const fleet = model({
+        hosts: model().hosts.concat([remoteHost]),
+        projects: [project({ routes: project().routes.concat([remoteRoute]) })],
+        tasks: [task(), remoteTask],
+        warnings: [{ hostId: REMOTE_HOST_ID, source: "fleet", code: "ssh_failed",
+            message: "Unavailable", retryable: true }],
+        truncation: Object.assign({}, model().truncation, {
+            sourceHostCount: 2, emittedHostCount: 2,
+            sourceTaskCount: 2, emittedTaskCount: 2
+        })
+    })
+    assert.strictEqual(modelApi.validateModel(fleet), true)
+    const taskItems = kinds(modelApi.launcherItems(fleet, "", state()), "task")
+    assert.strictEqual(taskItems.length, 2)
+    assert.notStrictEqual(taskItems[0].id, taskItems[1].id)
+    const remoteItem = taskItems.find(item => item._hostId === REMOTE_HOST_ID)
+    assert.strictEqual(remoteItem.comment, "Agent Switchboard | snap | Offline | now")
+    const creations = kinds(modelApi.launcherItems(
+        fleet, "Continue review", state({ category: `project:${PROJECT_ID}` })
+    ), "create")
+    assert.strictEqual(creations.length, 4)
+    assert.strictEqual(creations.some(item => item.name.includes(" on snap ")), true)
 }
 
 {
@@ -209,13 +279,13 @@ function kinds(items, kind) {
 
 {
     const good = modelApi.parseActionResponse(JSON.stringify({
-        actionVersion: 2,
+        actionVersion: 3,
         ok: true,
         action: { kind: "launched", surfaceId: "33333333-3333-4333-8333-333333333333" }
     }))
     assert.strictEqual(good.ok, true)
     const stopped = modelApi.parseActionResponse(JSON.stringify({
-        actionVersion: 2,
+        actionVersion: 3,
         ok: true,
         action: { kind: "stopped", status: "stopped" }
     }))
@@ -230,7 +300,7 @@ function kinds(items, kind) {
         Object.assign({}, model(), { inboxSessions: [{}] })
     ]
     for (const bad of badModels) {
-        const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 2, ok: true, model: bad }))
+        const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 3, ok: true, model: bad }))
         assert.strictEqual(parsed.ok, false)
         assert.strictEqual(parsed.error.code, "bridge_invalid_model")
     }
@@ -266,4 +336,4 @@ function kinds(items, kind) {
     }, false), "start_failed")
 }
 
-console.log("SwitchboardModelV3.js: 14 task-first behavior groups passed")
+console.log("SwitchboardModelV4.js: 15 fleet behavior groups passed")
