@@ -5,8 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "plugin.json"
-FIXTURE_PATH = ROOT / "tests" / "fixtures" / "snapshot-v1.json"
-FIXTURE_DIGEST = "fd3146e6f62eff8fe607227a7b22453f3ffbdcc1de28754da23ecc8c72dd10cb"
+FIXTURE_PATH = ROOT / "tests" / "fixtures" / "snapshot-v2.json"
+FIXTURE_DIGEST = "d70748e05eab95327f5f426266cf433223834507efaebcb4a9cb203d0c320eff"
 
 
 class ManifestContractTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class ManifestContractTests(unittest.TestCase):
             "id": "switchboard",
             "name": "Switchboard",
             "description": "Agent Switchboard launcher integration for DMS.",
-            "version": "0.1.0",
+            "version": "0.2.0",
             "author": "Bryan Bai",
             "type": "launcher",
             "component": "./SwitchboardLauncher.qml",
@@ -75,6 +75,10 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("item._sessionKey", execute_path)
         self.assertIn("item._provider", execute_path)
         self.assertIn('"--provider"', execute_path)
+        self.assertIn('"--create"', execute_path)
+        self.assertIn('"--task"', execute_path)
+        self.assertIn("function getCategories()", self.launcher)
+        self.assertIn("function getContextMenuActions(item)", self.launcher)
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
 
     def test_settings_use_verified_dms_components(self):
@@ -162,13 +166,13 @@ class DocumentationContractTests(unittest.TestCase):
     def test_runtime_prerequisites_are_truthfully_documented(self):
         for phrase in (
             "Python 3.12 or newer",
-            "Agent Switchboard 0.1.0",
+            "Agent Switchboard 0.2.0",
             "one executable token",
             "not a shell command",
             "DMS 1.5.0 or newer",
             "Quickshell runtime supplied by DMS",
             "no third-party Python packages",
-            "does not mean the integration has no runtime dependencies",
+            "not no runtime dependencies",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.normalized_readme)
@@ -183,11 +187,10 @@ class DocumentationContractTests(unittest.TestCase):
         commands = (
             "swbctl snapshot --json",
             "swbctl snapshot --reconcile full --json",
-            "swbctl list --json",
-            "swbctl list --refresh --json",
             "swbctl prepare-open <session-key> --request-id <uuid> --json",
-            "swbctl prepare-new --project <project-id> --location <location-id> --provider <provider> --request-id <uuid> --json",
-            "swbctl prepare-history --project <project-id> --location <location-id> --request-id <uuid> --json",
+            "swbctl prepare-task <task-id> --request-id <uuid> --json",
+            "swbctl prepare-task <task-id> --create --project <project-id> --title <text> --checkout <checkout-id> --provider <provider> --request-id <uuid> --json",
+            "swbctl prepare-history --project <project-id> --checkout <checkout-id> --request-id <uuid> --json",
             "swbctl stop-session <session-key> --json",
             "swbctl select-surface <surface-id> --client <tmux-client-id>",
             "swbctl attach-surface <surface-id>",
@@ -195,8 +198,8 @@ class DocumentationContractTests(unittest.TestCase):
         for command in commands:
             with self.subTest(command=command):
                 self.assertIn(command, self.docs)
-        self.assertIn("Snapshot v1 JSON", self.docs)
-        self.assertIn("PresentationPlan v1 JSON", self.docs)
+        self.assertIn("Snapshot v2 JSON", self.docs)
+        self.assertIn("PresentationPlan v2 JSON", self.docs)
         self.assertIn("user-configured `swbctl`", self.docs)
         self.assertIn("must not import internal Agent Switchboard", self.docs)
         self.assertIn("read its database", self.docs)
@@ -204,10 +207,10 @@ class DocumentationContractTests(unittest.TestCase):
     def test_cache_semantics_are_documented(self):
         for phrase in (
             "`Qt.callLater`",
-            "last-good snapshot",
+            "last-good model",
             "Missing observations and stale data",
-            "neutral Codex or Claude capability",
-            "Launch targets contain stable IDs",
+            "neutral Codex or Claude",
+            "Task rows contain stable IDs",
             "does not connect that signal",
             "reopened or the query changes",
             "`Process.signal(15)`",
@@ -221,7 +224,7 @@ class DocumentationContractTests(unittest.TestCase):
             "provider hooks or liveness inference",
             "arbitrary working-directory launch",
             "project-catalog editing",
-            "direct tmux locator",
+            "tmux locator",
             "non-niri/non-Ghostty adapters",
             "chezmoi cutover",
             "rich widget",
@@ -280,12 +283,12 @@ class DevelopmentWorkflowTests(unittest.TestCase):
 
 
 class FixtureContractTests(unittest.TestCase):
-    def test_fixture_digest_and_v1_envelope(self):
+    def test_fixture_digest_and_v2_envelope(self):
         payload = FIXTURE_PATH.read_bytes()
         self.assertEqual(hashlib.sha256(payload).hexdigest(), FIXTURE_DIGEST)
         snapshot = json.loads(payload)
-        self.assertEqual(snapshot["schemaVersion"], 1)
-        self.assertEqual(snapshot["protocolVersion"], 1)
+        self.assertEqual(snapshot["schemaVersion"], 2)
+        self.assertEqual(snapshot["protocolVersion"], 2)
 
     def test_fixture_provenance_is_recorded(self):
         provenance = (ROOT / "tests" / "fixtures" / "README.md").read_text(
@@ -295,12 +298,11 @@ class FixtureContractTests(unittest.TestCase):
             "byebyebryan/agent-switchboard",
             provenance,
         )
-        self.assertIn("tests/fixtures/protocol/v1/snapshot.json", provenance)
+        self.assertIn("tests/fixtures/protocol/v2/snapshot.json", provenance)
+        self.assertIn("803f0f8", provenance)
         self.assertNotIn("/home/bryan", provenance)
         self.assertIn("synthetic test data", provenance)
         self.assertIn("not a capture of a live machine", provenance)
-        self.assertIn("898fa1080712235993781c27c56d312e8e3cef9e", provenance)
-        self.assertIn("b3b54b4dc1eea5a5b0bd78792fa6c7f626701a8f", provenance)
         self.assertIn(FIXTURE_DIGEST, provenance)
 
 

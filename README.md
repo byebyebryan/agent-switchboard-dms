@@ -1,139 +1,107 @@
 # Switchboard for DMS
 
-Switchboard is a DankMaterialShell (DMS) launcher integration for starting new
-local Codex or Claude Code sessions, opening known local sessions, entering
-Claude's native history picker, and safely stopping launch-owned Claude
-runtimes from Agent Switchboard. The QML launcher
-returns filtered rows from an in-memory last-good cache while persistent DMS
-`Process` instances run repository-owned snapshot and action helpers
-asynchronously. Selecting a configured project/provider location starts a new
-session; selecting a retained session reopens it. Both consume a validated
-PresentationPlan v1 and either focus an existing niri window or open Ghostty
-onto a core-owned tmux surface.
+Switchboard is the task-first DankMaterialShell launcher for local Agent
+Switchboard work. Its default view lists open tasks, groups them by project,
+keeps unassigned provider sessions in Inbox, and exposes closed tasks
+separately. Codex, Claude Code, and not-yet-started tasks use distinct icons;
+normal rows show concise project, optional nondefault worktree, state, and age
+instead of absolute paths.
 
-The integration boundary is deliberately narrow. `switchboard-bridge` runs a
-user-configured `swbctl` executable without a shell and consumes Snapshot v1
-JSON through the public commands documented in
-[docs/architecture.md](docs/architecture.md). It does not import Agent
-Switchboard internals, read its database directly, or invoke provider commands
-itself. `--refresh` intentionally asks the public `swbctl` boundary to perform
-full reconciliation before returning the snapshot. `switchboard-open`
-coordinates only validated prepare/select results and delegates final tmux
-attachment back to `swbctl attach-surface` inside Ghostty.
+The launcher reads a validated Snapshot v2 asynchronously into an in-memory
+last-good cache. Selecting a task invokes `prepare-task`; selecting an Inbox
+session invokes `prepare-open`. In a project category, a nonempty query offers
+Codex and Claude creation rows using the query as the task title. The desktop
+helper generates stable task and request UUIDs and calls atomic new-task
+preparation, so a focus fallback cannot create a second task or provider
+runtime.
 
-Plugin settings expose only the integration controls needed by this phase:
+Claude's native history picker and safe launch-owned runtime stop are context
+menu actions. They do not create duplicate search rows. History remains inside
+Claude's unmodified picker, and stop remains subject to core's independent
+launch, surface, tmux, PID/birth, UID, and process-group checks.
 
-- `swbctl` executable token, defaulting to normal lookup of `swbctl` and
-  limited to 4096 JavaScript UTF-16 code units
-- terminal executable token, defaulting to `ghostty` and subject to the same
-  one-token bound
-- snapshot timeout from 100 through 60000 milliseconds, defaulting to 10000
-- refresh interval from 5 through 300 seconds, defaulting to 15
+## Boundary
 
-The first background run is a retained read. A snapshot older than the refresh
-interval coalesces one full refresh. A complete successful bridge response
-atomically replaces the cache; command, timeout, parse, and validation failures
-leave the last-good session rows in place and add an explicit failure item.
-Provider degradation and neutral capability state remain distinct from process
-failure. Session activity and runtime labels are copied from the source model,
-never inferred from missing or stale observations.
+`switchboard-bridge` runs one user-configured `swbctl` executable token without
+a shell and consumes only public Snapshot v2, PresentationPlan v2, and
+SessionAction v2 JSON. It does not import Agent Switchboard internals, read its
+database, invoke Git, inspect provider transcripts, or own provider/tmux
+lifecycle. `switchboard-open` executes validated focus/switch/attach plans and
+delegates final tmux attachment back to `swbctl attach-surface`.
 
-DMS 1.5.0 does not consume launcher `itemsChanged()`. Background completion
-therefore does not mutate an already rendered result list; the refreshed cache
-appears when the launcher is reopened or its query changes.
+The bridge uses only the Python standard library and no third-party Python
+packages. That means dependency-free Python code, not no runtime dependencies.
 
 ## Runtime prerequisites
 
-- Python 3.12 or newer. Agent Switchboard 0.1.0 declares this minimum Python
-  version, and the bridge runs under Python as well.
-- Agent Switchboard 0.1.0's `swbctl`, either installed on `PATH` as `swbctl` or
-  configured in the plugin's `swbctl` setting as one executable token (a bare
-  executable name or path). The setting is not a shell command and cannot
-  include arguments.
-- DMS 1.5.0 or newer, including the Quickshell runtime supplied by DMS.
-- niri, Ghostty, and a systemd user manager for desktop action execution.
+- Python 3.12 or newer.
+- Agent Switchboard 0.2.0's `swbctl`, installed on `PATH` or configured as one
+  executable token. The value is not a shell command and cannot include
+  arguments.
+- DMS 1.5.0 or newer and the Quickshell runtime supplied by DMS.
+- niri, Ghostty, and a systemd user manager for desktop presentation.
 
-Calling `switchboard-bridge` dependency-free means that its Python
-implementation uses the Python standard library and no third-party Python
-packages. It does not mean the integration has no runtime dependencies: the
-Python, Agent Switchboard/`swbctl`, DMS, and DMS-supplied Quickshell
-prerequisites above still apply. The session-opening helper additionally needs
-niri, Ghostty, and `systemd-run`.
+Plugin settings contain the `swbctl` and terminal executable tokens, a
+100-60000 ms snapshot timeout, and a 5-300 second refresh interval. A retained
+read happens first; stale data coalesces one full reconciliation. Parse,
+validation, process, and timeout failures keep the last-good snapshot visible.
+Missing observations and stale data are not converted into activity guesses,
+and an absent provider capability remains neutral.
 
-Run a retained read with normal executable lookup:
+DMS 1.5.0 does not consume launcher `itemsChanged()` as a live result-list
+mutation. The refreshed cache appears when the launcher is reopened or the
+query changes. Dynamic project categories use DMS's native launcher category
+contract.
+
+## Direct helper use
+
+Read retained or fully reconciled state:
 
 ```sh
 ./switchboard-bridge
-```
-
-Request a full refresh with:
-
-```sh
 ./switchboard-bridge --refresh
 ```
 
-Open one canonical local Codex or Claude session key with:
+Open an existing task or exact Inbox session:
 
 ```sh
-./switchboard-open --window-host HOST-DISPLAY-NAME HOST-ID:codex:SESSION-UUID
-# or HOST-ID:claude:SESSION-UUID
+./switchboard-open --window-host HOST --task TASK-UUID
+./switchboard-open --window-host HOST HOST-ID:codex:SESSION-UUID
 ```
 
-Start one new Codex or Claude session from canonical configured IDs with:
+Create and open a task atomically:
 
 ```sh
-./switchboard-open --window-host HOST-DISPLAY-NAME \
-  --project PROJECT-UUID --location LOCATION-UUID --provider codex
-# or --provider claude
+./switchboard-open --window-host HOST --create \
+  --project PROJECT-UUID --title "Fix picker layout" \
+  --checkout CHECKOUT-UUID --provider codex
 ```
 
-Open Claude's provider-native history picker for one configured location with:
+Open Claude history or stop one core-confirmed Claude runtime:
 
 ```sh
-./switchboard-open --window-host HOST-DISPLAY-NAME \
-  --history --project PROJECT-UUID --location LOCATION-UUID
+./switchboard-open --window-host HOST --history \
+  --project PROJECT-UUID --checkout CHECKOUT-UUID
+./switchboard-open --window-host HOST --stop HOST-ID:claude:SESSION-UUID
 ```
 
-Stop one core-confirmed, launch-owned Claude session with:
-
-```sh
-./switchboard-open --stop HOST-ID:claude:SESSION-UUID
-```
-
-History selection remains inside Claude's unmodified `claude --resume` picker;
-no picker rows or transcript metadata enter the DMS model. Stop is offered only
-when the validated snapshot projects `canStop=true`, and core independently
-revalidates exact launch, surface, tmux, PID/birth, UID, and process-group
-ownership before acting.
-
-The helper generates one request ID. If focus fails, it reuses that ID while
-requesting an attach plan, so retries cannot reserve or start another provider
-runtime.
-
-Managed bridge runs keep stderr empty and, while stdout remains writable, emit
-exactly one JSON object. They use exit `0` for valid models or exit `1` for
-structured failures; a broken stdout also exits `1` without diagnostic output.
-See
-[docs/bridge-contract.md](docs/bridge-contract.md) for the complete argv,
-limit, output, and error contract.
+Managed helpers emit one bounded canonical JSON record on stdout and keep
+stderr empty. See [docs/bridge-contract.md](docs/bridge-contract.md) for exact
+argv, output, and failure rules.
 
 ## Development
 
-Run the baseline checks with:
+Run the complete deterministic check lane:
 
 ```sh
 ./scripts/check
 ```
 
-The checks validate the plugin manifest, static QML cache/process surface,
-deterministic JavaScript session/action projection and search behavior,
-architecture and bridge contracts, bounded process behavior, Snapshot,
-PresentationPlan, and SessionAction projection, niri matching, fixed Ghostty
-argv, same-request fallback, and the pinned synthetic protocol fixture. QML
-runtime tests are intentionally not claimed in CI because the live harness
-needs installed DMS imports and an active display.
+It covers Snapshot v2/model v3 projection, task categories and row formatting,
+atomic task argv, context-action routing, niri/Ghostty execution, process-group
+cleanup and fault injection, static QML contracts, and documentation.
 
-Install this checkout as the local development plugin with:
+Install this checkout as the local development plugin:
 
 ```sh
 ./scripts/dev-plugin install
@@ -143,13 +111,9 @@ dms ipc call plugins enable switchboard
 dms ipc call plugins reload switchboard
 ```
 
-`dev-plugin` derives the DMS user plugin directory from `XDG_CONFIG_HOME` and
-creates only a `switchboard` symlink back to the current checkout. It refuses
-foreign destinations, symlinked plugin directories, and paths not owned by the
-current user. Use `--plugin-dir` when DMS is configured elsewhere. The
-registry-only `dms plugins install` command does not accept a local checkout.
-
-Disable and remove only this checkout's link with:
+`dev-plugin` creates only a `switchboard` symlink in the DMS user plugin
+directory and refuses foreign or unsafe destinations. Remove only this
+checkout's link with:
 
 ```sh
 dms ipc call plugins disable switchboard
@@ -157,37 +121,27 @@ dms ipc call plugins disable switchboard
 dms ipc call plugin-scan scan
 ```
 
-The disruptive real-shell lifecycle verifier is deliberately separate:
-
-```sh
-./scripts/live-shell-integration --swbctl /path/to/swbctl --confirm-disruptive
-```
-
-It restarts DMS and performs real full reconciliation, but installs rollback
-traps before mutation and verifies exact restoration. See the runbook before
-using it.
-
-Configure the `swbctl` executable through the plugin's DMS settings before
-testing data. The repository and scripts never hardcode an Agent Switchboard
-checkout. For a component-level runtime exercise using the installed DMS QML
-imports and an explicit executable, run:
+The component harness uses private Agent Switchboard state and does not touch a
+live provider session:
 
 ```sh
 ./scripts/live-integration --swbctl /path/to/swbctl
 ```
 
-The harness copies the selected Agent Switchboard state into a private
-temporary `XDG_STATE_HOME` and prints summary fields only. It covers settings
-focus/height, retained and full-refresh bridge runs, exact internal query
-projection, exact last-good retention, configured-executable failure/recovery,
-and QML process start failure/recovery. Its process group and temporary state
-are removed on normal exit and signals. DMS 1.5.0 can open a launcher query by
-IPC but cannot return rendered launcher results by IPC, so shell discovery
-evidence remains separate. See
-[docs/live-integration.md](docs/live-integration.md) for the sanitized
-reproducible runbook, selected evidence, and limitations.
+The separate disruptive shell verifier restarts DMS and must be requested
+explicitly:
 
-On a DMS 1.5.0 development machine, also run:
+```sh
+./scripts/live-shell-integration --swbctl /path/to/swbctl --confirm-disruptive
+```
+
+It installs rollback traps before mutation; see
+[docs/live-integration.md](docs/live-integration.md) before use. The repository
+does not perform a chezmoi cutover, add SSH, edit the project catalog, accept an
+arbitrary working-directory launch, expose a direct tmux locator, implement
+non-niri/non-Ghostty adapters, or become a rich widget.
+
+For local diagnostics, also run:
 
 ```sh
 /usr/lib/qt6/bin/qmlformat SwitchboardLauncher.qml SwitchboardSettings.qml tests/live/Shell.qml
@@ -197,12 +151,5 @@ ruff format --check .
 pyright switchboard_dms
 ```
 
-See [docs/implementation-plan.md](docs/implementation-plan.md) for the phased
-implementation and [docs/live-integration.md](docs/live-integration.md) for
-live DMS evidence.
-
-When Qt 6 `qmlformat` is installed at `/usr/lib/qt6/bin/qmlformat`,
-`scripts/check` also byte-compares its output for all three QML files. Qt 6
-`qmllint` remains a diagnostic command: DMS's Quickshell-specific `qs.*`
-imports are not fully resolved by standalone `qmllint`, so a warning-free lint
-gate is not claimed.
+Standalone `qmllint` cannot resolve every DMS-specific `qs.*` import, so it is
+diagnostic rather than a warning-free gate.

@@ -1,5 +1,10 @@
 # Live DMS integration
 
+> The evidence below records the Phase 1 through 3C Snapshot v1 rollout. The
+> repository-owned harness now targets Snapshot v2/model v3 task and Inbox
+> rows. Phase 4D installed acceptance will be appended after the guarded local
+> rollout; older location/session-list observations remain historical evidence.
+
 ## Supported DMS paths
 
 DMS 1.5.0 reads user plugins from

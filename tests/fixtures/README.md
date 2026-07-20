@@ -5,6 +5,10 @@
 
 `tests/fixtures/protocol/v2/snapshot.json`
 
+The reviewed core contract is Agent Switchboard commit `803f0f8`. Runtime code
+still consumes only the public executable/JSON boundary and does not import
+that repository.
+
 It adds a closed task and an unassigned Claude session so the DMS model can
 exercise open-task, Closed, Inbox, provider-icon, and safe-stop behavior. It is
 not a capture of a live machine or user session.

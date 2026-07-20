@@ -1,5 +1,12 @@
 # Implementation plan
 
+> Historical chronology: Phases 1 through 3C below describe the retired
+> Snapshot v1/location/session-list implementation. Phase 4D replaces that
+> runtime with Snapshot v2, repositories/checkouts/tasks, frontend model v3,
+> native project/Inbox/Closed categories, atomic `prepare-task`, and context
+> actions. See `architecture.md` and `bridge-contract.md` for the current
+> 0.2.0 contract.
+
 ## Phase 0: discovery and contract lock (complete)
 
 Discovery established the public boundary before implementation:
@@ -213,6 +220,33 @@ model turn. A follow-up isolated desktop exercise also passed live niri focus
 and same-window dedup while leaving the pre-existing Claude session untouched.
 Remote hosts remain later work, and the legacy `agentSessions` plugin remains
 only the untouched remote fallback.
+
+## Phase 4D: repository-anchored projects and task-first DMS (implementation complete)
+
+Phase 4D replaces the location/session-list frontend contract instead of
+layering aliases over it:
+
+- Snapshot v2 carries projects, project/repository memberships, repositories,
+  checkouts, first-class tasks, sessions, runtimes, and surfaces.
+- The independent bridge validates that contract and emits bounded model v3
+  project, task, and unassigned-Inbox records without paths or private Git
+  identity.
+- Native DMS categories are All tasks, one category per declared project,
+  Inbox, and Closed. The default list contains open task rows plus one compact
+  Inbox summary rather than every discovered provider session.
+- A nonempty query within a project category offers Codex and Claude task
+  creation. The desktop helper supplies a stable TaskId/request pair to core's
+  atomic `prepare-task --create` path and reuses it across focus fallback.
+- Task rows use provider-specific icons and concise project, nondefault
+  checkout, state, and age metadata. Existing sessions remain unassigned until
+  a human explicitly adopts them into a task.
+- Claude history remains a project/checkout context action. Stop remains a
+  conservative current-session action and is never implied by closing a task.
+
+Implementation acceptance is 90 Python tests, 13 deterministic JavaScript
+behavior groups, Qt 6 QML formatting, Ruff, package Pyright, and whitespace
+checks. Guarded installed acceptance and the evidence update remain before the
+phase is marked fully complete.
 
 ## Final audit and publication
 
