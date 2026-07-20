@@ -14,6 +14,7 @@ Item {
     property string trigger: "sb:"
     property string swbctlExecutable: "swbctl"
     property string terminalExecutable: "ghostty"
+    property string activeCategory: ""
     property int timeoutMs: 10000
     property int refreshSeconds: 15
     property var lastGoodModel: null
@@ -91,8 +92,17 @@ Item {
             "now": now,
             "loading": runActive || startScheduled,
             "stale": snapshotIsStale(now),
-            "failure": currentFailure
+            "failure": currentFailure,
+            "category": activeCategory
         });
+    }
+
+    function getCategories() {
+        return SwitchboardModel.categories(lastGoodModel);
+    }
+
+    function setCategory(categoryId) {
+        activeCategory = String(categoryId || "");
     }
 
     function executeItem(item) {
@@ -100,17 +110,48 @@ Item {
             return;
 
         let targetArguments;
-        if (item._switchboardKind === "session" && item._sessionKey) {
+        if (item._switchboardKind === "task" && item._taskId)
+            targetArguments = ["--task", item._taskId];
+        else if (item._switchboardKind === "create" && item._projectId && item._checkoutId && item._provider && item._title)
+            targetArguments = ["--create", "--project", item._projectId, "--title", item._title, "--checkout", item._checkoutId, "--provider", item._provider];
+        else if (item._switchboardKind === "session" && item._sessionKey)
             targetArguments = [item._sessionKey];
-        } else if (item._switchboardKind === "new" && item._projectId && item._locationId && item._provider) {
-            targetArguments = ["--project", item._projectId, "--location", item._locationId, "--provider", item._provider];
-        } else if (item._switchboardKind === "history" && item._projectId && item._locationId) {
-            targetArguments = ["--history", "--project", item._projectId, "--location", item._locationId];
-        } else if (item._switchboardKind === "stop" && item._sessionKey) {
-            targetArguments = ["--stop", item._sessionKey];
-        } else {
+        else
             return;
-        }
+        startAction(item, targetArguments);
+    }
+
+    function getContextMenuActions(item) {
+        if (!item || !item._windowHost)
+            return [];
+
+        const result = [];
+        if (item._projectId && item._checkoutId)
+            result.push({
+                "text": "Claude history",
+                "icon": "history",
+                "closeLauncher": true,
+                "action": function () {
+                    root.startAction(item, ["--history", "--project", item._projectId, "--checkout", item._checkoutId]);
+                }
+            });
+
+        if (item._provider === "claude" && item._canStop && item._sessionKey)
+            result.push({
+                "text": "Stop Claude runtime",
+                "icon": "stop_circle",
+                "closeLauncher": true,
+                "action": function () {
+                    root.startAction(item, ["--stop", item._sessionKey]);
+                }
+            });
+
+        return result;
+    }
+
+    function startAction(item, targetArguments) {
+        if (actionActive || !item || !item._windowHost || !Array.isArray(targetArguments))
+            return;
 
         actionActive = true;
         actionExpired = false;

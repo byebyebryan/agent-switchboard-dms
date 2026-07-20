@@ -141,11 +141,11 @@ json_assert() {
 }
 
 healthy=$(wait_for "initial retained snapshot" 'import json, os, sys; s=json.loads(os.environ["STATE"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"]))')
-json_assert "$healthy" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["sessionCount"] > 0; assert s["settingsHeightPositive"]; assert s["swbctlConfigured"]'
+json_assert "$healthy" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["settingsHeightPositive"]; assert s["swbctlConfigured"]'
 printf 'INITIAL %s\n' "$healthy"
 
 queried=$(ipc captureBaseline)
-json_assert "$queried" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["sessionCount"] > 0; assert s["queryMatchedExact"]'
+json_assert "$queried" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["queryMatchedExact"]'
 printf 'QUERY %s\n' "$queried"
 
 focused=$(ipc focusSettings)
@@ -154,31 +154,31 @@ printf 'SETTINGS %s\n' "$focused"
 
 before_generation=$(STATE=$healthy python3 -c 'import json, os; print(json.loads(os.environ["STATE"])["runGeneration"])')
 ipc refresh >/dev/null
-refreshed=$(wait_for "full refresh" 'import json, os, sys; s=json.loads(os.environ["STATE"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["runGeneration"] > minimum and s["runWasRefresh"] and s["refreshGeneratedAtAdvanced"] and s["sessionCount"] > 0))' MINIMUM=$before_generation)
+refreshed=$(wait_for "full refresh" 'import json, os, sys; s=json.loads(os.environ["STATE"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["runGeneration"] > minimum and s["runWasRefresh"] and s["refreshGeneratedAtAdvanced"] and s["entryCount"] > 0))' MINIMUM=$before_generation)
 printf 'REFRESH %s\n' "$refreshed"
 
 retention=$(ipc captureRetentionBaseline)
-retained_count=$(STATE=$retention python3 -c 'import json, os; s=json.loads(os.environ["STATE"]); assert s["sessionCount"] > 0 and s["retainedModelMatches"]; print(s["sessionCount"])')
+retained_count=$(STATE=$retention python3 -c 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0 and s["retainedModelMatches"]; print(s["entryCount"])')
 ipc setExecutable "$temporary/missing-swbctl" >/dev/null
-degraded=$(wait_for "configured executable failure" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); sys.exit(not (s["idle"] and s["failureCode"] == "executable_not_found" and expected > 0 and s["sessionCount"] == expected and s["retentionBaselineCount"] == expected and s["retainedModelMatches"]))' EXPECTED=$retained_count)
+degraded=$(wait_for "configured executable failure" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); sys.exit(not (s["idle"] and s["failureCode"] == "executable_not_found" and expected > 0 and s["entryCount"] == expected and s["retentionBaselineCount"] == expected and s["retainedModelMatches"]))' EXPECTED=$retained_count)
 printf 'RETAINED_FAILURE %s\n' "$degraded"
 
 failed_generation=$(STATE=$degraded python3 -c 'import json, os; print(json.loads(os.environ["STATE"])["runGeneration"])')
 ipc setExecutable "$swbctl" >/dev/null
-recovered=$(wait_for "configured executable recovery" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"] and s["sessionCount"] == expected and s["runGeneration"] > minimum))' EXPECTED=$retained_count MINIMUM=$failed_generation)
+recovered=$(wait_for "configured executable recovery" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"] and s["entryCount"] == expected and s["runGeneration"] > minimum))' EXPECTED=$retained_count MINIMUM=$failed_generation)
 printf 'RECOVERED %s\n' "$recovered"
 
 retention=$(ipc captureRetentionBaseline)
-retained_count=$(STATE=$retention python3 -c 'import json, os; s=json.loads(os.environ["STATE"]); assert s["sessionCount"] > 0 and s["retainedModelMatches"]; print(s["sessionCount"])')
+retained_count=$(STATE=$retention python3 -c 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0 and s["retainedModelMatches"]; print(s["entryCount"])')
 mv -- "$temporary/switchboard-bridge" "$temporary/switchboard-bridge.disabled"
 ipc refresh >/dev/null
-start_failed=$(wait_for "QML process start failure" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); sys.exit(not (s["idle"] and s["failureCode"] == "bridge_start_failed" and expected > 0 and s["sessionCount"] == expected and s["retentionBaselineCount"] == expected and s["retainedModelMatches"]))' EXPECTED=$retained_count)
+start_failed=$(wait_for "QML process start failure" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); sys.exit(not (s["idle"] and s["failureCode"] == "bridge_start_failed" and expected > 0 and s["entryCount"] == expected and s["retentionBaselineCount"] == expected and s["retainedModelMatches"]))' EXPECTED=$retained_count)
 printf 'START_FAILURE %s\n' "$start_failed"
 
 failed_generation=$(STATE=$start_failed python3 -c 'import json, os; print(json.loads(os.environ["STATE"])["runGeneration"])')
 mv -- "$temporary/switchboard-bridge.disabled" "$temporary/switchboard-bridge"
 ipc refresh >/dev/null
-start_recovered=$(wait_for "QML process start recovery" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"] and s["sessionCount"] == expected and s["runGeneration"] > minimum))' EXPECTED=$retained_count MINIMUM=$failed_generation)
+start_recovered=$(wait_for "QML process start recovery" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"] and s["entryCount"] == expected and s["runGeneration"] > minimum))' EXPECTED=$retained_count MINIMUM=$failed_generation)
 printf 'START_RECOVERED %s\n' "$start_recovered"
 
 if rg -q -i 'component error.*switchboard|switchboard.*component error|failed to (load|instantiate).*switchboard|switchboard.*failed to (load|instantiate)' "$log_file"; then

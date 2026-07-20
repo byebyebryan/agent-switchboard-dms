@@ -5,9 +5,9 @@ import Quickshell.Io
 ShellRoot {
     id: root
 
-    property string capturedSessionId: ""
-    property string capturedSessionKey: ""
-    property int retentionSessionCount: 0
+    property string capturedIdentity: ""
+    property string capturedItemKey: ""
+    property int retentionEntryCount: 0
     property string retentionFingerprint: ""
     property double refreshBaselineGeneratedAt: -1
     property bool queryMatchedExact: false
@@ -18,17 +18,18 @@ ShellRoot {
 
     function summary() {
         const model = launcher.lastGoodModel;
-        const sessions = model && Array.isArray(model.sessions) ? model.sessions : [];
+        const tasks = model && Array.isArray(model.tasks) ? model.tasks : [];
+        const inbox = model && Array.isArray(model.inboxSessions) ? model.inboxSessions : [];
         return JSON.stringify({
             "idle": !launcher.runActive && !launcher.startScheduled,
             "runGeneration": launcher.runGeneration,
             "runWasRefresh": launcher.runWasRefresh,
             "hasModel": model !== null,
-            "sessionCount": sessions.length,
+            "entryCount": tasks.length + inbox.length,
             "failureCode": launcher.currentFailure ? launcher.currentFailure.code : "",
             "queryMatchedExact": root.queryMatchedExact,
             "refreshGeneratedAtAdvanced": model !== null && root.refreshBaselineGeneratedAt >= 0 && model.generatedAt > root.refreshBaselineGeneratedAt,
-            "retentionBaselineCount": root.retentionSessionCount,
+            "retentionBaselineCount": root.retentionEntryCount,
             "retainedModelMatches": root.retentionFingerprint !== "" && root.modelFingerprint() === root.retentionFingerprint,
             "settingsHeightPositive": settingsRoot.implicitHeight > 0,
             "settingsFocused": settingsRoot.focus || settingsRoot.activeFocus,
@@ -115,18 +116,20 @@ ShellRoot {
 
         function captureBaseline(): string {
             const model = launcher.lastGoodModel;
-            const sessions = model && Array.isArray(model.sessions) ? model.sessions : [];
+            const tasks = model && Array.isArray(model.tasks) ? model.tasks : [];
+            const inbox = model && Array.isArray(model.inboxSessions) ? model.inboxSessions : [];
             root.queryMatchedExact = false;
-            if (sessions.length === 0)
+            if (tasks.length === 0 && inbox.length === 0)
                 return root.summary();
 
-            root.capturedSessionId = sessions[0].providerSessionId;
-            root.capturedSessionKey = sessions[0].sessionKey;
+            const useTask = tasks.length > 0;
+            root.capturedIdentity = useTask ? tasks[0].title : inbox[0].providerSessionId;
+            root.capturedItemKey = useTask ? tasks[0].taskId : inbox[0].sessionKey;
             root.refreshBaselineGeneratedAt = model.generatedAt;
-            const items = launcher.getItems(root.capturedSessionId);
+            const items = launcher.getItems(root.capturedIdentity);
             let matches = 0;
             for (let index = 0; index < items.length; index++) {
-                if (items[index]._switchboardKind === "session" && items[index]._sessionKey === root.capturedSessionKey)
+                if ((useTask && items[index]._switchboardKind === "task" && items[index]._taskId === root.capturedItemKey) || (!useTask && items[index]._switchboardKind === "session" && items[index]._sessionKey === root.capturedItemKey))
                     matches += 1;
             }
             root.queryMatchedExact = matches === 1;
@@ -135,7 +138,9 @@ ShellRoot {
 
         function captureRetentionBaseline(): string {
             const model = launcher.lastGoodModel;
-            root.retentionSessionCount = model && Array.isArray(model.sessions) ? model.sessions.length : 0;
+            const tasks = model && Array.isArray(model.tasks) ? model.tasks : [];
+            const inbox = model && Array.isArray(model.inboxSessions) ? model.inboxSessions : [];
+            root.retentionEntryCount = tasks.length + inbox.length;
             root.retentionFingerprint = root.modelFingerprint();
             return root.summary();
         }

@@ -1,14 +1,13 @@
 .pragma library
 
-var BRIDGE_VERSION = 1
-var ACTION_VERSION = 1
-var MODEL_VERSION = 2
+var BRIDGE_VERSION = 2
+var ACTION_VERSION = 2
+var MODEL_VERSION = 3
 var MAX_EXECUTABLE_LENGTH = 4096
 
 function boundedExecutable(value, fallback) {
     var defaultValue = String(fallback || "swbctl")
-    var text = String(value || defaultValue)
-    return text.substring(0, MAX_EXECUTABLE_LENGTH)
+    return String(value || defaultValue).substring(0, MAX_EXECUTABLE_LENGTH)
 }
 
 function _object(value) {
@@ -42,92 +41,123 @@ function _failure(code, message, retryable) {
     }
 }
 
-function _validateSession(session, hostId) {
-    if (!_object(session) || !_oneOf(session.provider, ["codex", "claude"]))
-        return false
-    if (!_string(session.sessionKey) || !_string(session.providerSessionId))
-        return false
-    if (session.hostId !== hostId || !_timestamp(session.recencyAt))
-        return false
-    if (session.sessionKey !== hostId + ":" + session.provider + ":" + session.providerSessionId)
-        return false
-    if (!_optionalString(session.name) || !_optionalString(session.cwd))
-        return false
-    if (!_optionalString(session.projectName) || !_optionalString(session.locationName))
-        return false
-    if (!_string(session.metadataSource))
-        return false
-    if (!_oneOf(session.runtimePresence, ["live", "stopped", "unknown"]))
-        return false
-    if (!_oneOf(session.resumability, ["resumable", "missing", "unknown"]))
-        return false
-    if (!_oneOf(session.activity, ["working", "needs_input", "ready", "completed", "unknown"]))
-        return false
-    if (!_oneOf(session.activityReason, ["permission", "question", "elicitation", "turn_complete", "provider_complete", "error", "unknown"]))
-        return false
-    if (!_oneOf(session.attachment, ["attached", "detached", "none", "unknown"]))
-        return false
-    if (!_oneOf(session.stateConfidence, ["confirmed", "inferred", "unknown"]))
-        return false
-    if (typeof session.pinned !== "boolean" || typeof session.canStop !== "boolean")
-        return false
-    if (session.canStop && (session.provider !== "claude" || session.runtimePresence !== "live"))
-        return false
-    return true
+function _validateCapability(value, provider) {
+    return _object(value)
+        && value.provider === provider
+        && _oneOf(value.status, ["available", "degraded", "neutral"])
+        && (value.available === null || typeof value.available === "boolean")
+        && Array.isArray(value.features)
+        && Array.isArray(value.degradedReasons)
 }
 
-function _validateLaunchTarget(target) {
-    if (!_object(target) || !_oneOf(target.provider, ["codex", "claude"]))
-        return false
-    if (!_string(target.projectId) || !_string(target.projectName))
-        return false
-    if (!_string(target.locationId) || !_optionalString(target.locationName))
-        return false
-    return typeof target.isDefault === "boolean"
+function _validateProject(value) {
+    return _object(value)
+        && _string(value.projectId)
+        && _string(value.name)
+        && _optionalString(value.repositoryName)
+        && _oneOf(value.defaultProvider, ["codex", "claude"])
+        && _optionalString(value.defaultCheckoutId)
 }
 
-function _validateCapability(capability, provider) {
-    if (!_object(capability) || capability.provider !== provider)
+function _validateTask(value) {
+    if (!_object(value) || !_string(value.taskId) || !_string(value.projectId))
         return false
-    if (["available", "degraded", "neutral"].indexOf(capability.status) === -1)
+    if (!_string(value.projectName) || !_string(value.title))
         return false
-    if (capability.available !== null && typeof capability.available !== "boolean")
+    if (!_optionalString(value.checkoutId) || !_optionalString(value.checkoutName))
         return false
-    if (!Array.isArray(capability.features) || !Array.isArray(capability.degradedReasons))
+    if (!_optionalString(value.checkoutKind) || !_optionalString(value.checkoutBranch))
         return false
-    if (capability.status === "neutral" && capability.available !== null)
+    if (value.checkoutKind !== null && !_oneOf(value.checkoutKind, ["main", "worktree", "directory"]))
         return false
-    if (capability.status === "available" && capability.available !== true)
+    if (typeof value.checkoutIsDefault !== "boolean" || typeof value.pinned !== "boolean")
         return false
-    return true
+    if (!_optionalString(value.purpose) || !_optionalString(value.preferredProvider))
+        return false
+    if (value.preferredProvider !== null && !_oneOf(value.preferredProvider, ["codex", "claude"]))
+        return false
+    if (!_oneOf(value.status, ["open", "closed"]) || !_optionalString(value.currentSessionKey))
+        return false
+    if (!_timestamp(value.createdAt) || !_timestamp(value.updatedAt))
+        return false
+    if (value.closedAt !== null && !_timestamp(value.closedAt))
+        return false
+    if (!_optionalString(value.provider) || !_oneOf(value.runtimePresence, ["live", "stopped", "unknown"]))
+        return false
+    if (value.provider !== null && !_oneOf(value.provider, ["codex", "claude"]))
+        return false
+    if (!_oneOf(value.resumability, ["resumable", "missing", "unknown"]))
+        return false
+    if (!_oneOf(value.activity, ["working", "needs_input", "ready", "completed", "unknown"]))
+        return false
+    if (!_oneOf(value.activityReason, ["permission", "question", "elicitation", "turn_complete", "provider_complete", "error", "unknown"]))
+        return false
+    if (!_oneOf(value.attachment, ["attached", "detached", "none", "unknown"]))
+        return false
+    if (!_oneOf(value.stateConfidence, ["confirmed", "inferred", "unknown"]))
+        return false
+    return _timestamp(value.recencyAt) && typeof value.canStop === "boolean"
+}
+
+function _validateInboxSession(value) {
+    if (!_object(value) || !_string(value.sessionKey) || !_string(value.providerSessionId))
+        return false
+    if (!_oneOf(value.provider, ["codex", "claude"]))
+        return false
+    if (!_optionalString(value.projectId) || !_optionalString(value.projectName))
+        return false
+    if (!_optionalString(value.checkoutId) || !_optionalString(value.checkoutName) || !_optionalString(value.name))
+        return false
+    if (!_oneOf(value.runtimePresence, ["live", "stopped", "unknown"]))
+        return false
+    if (!_oneOf(value.resumability, ["resumable", "missing", "unknown"]))
+        return false
+    if (!_oneOf(value.activity, ["working", "needs_input", "ready", "completed", "unknown"]))
+        return false
+    if (!_oneOf(value.activityReason, ["permission", "question", "elicitation", "turn_complete", "provider_complete", "error", "unknown"]))
+        return false
+    if (!_oneOf(value.attachment, ["attached", "detached", "none", "unknown"]))
+        return false
+    if (!_oneOf(value.stateConfidence, ["confirmed", "inferred", "unknown"]))
+        return false
+    return _timestamp(value.recencyAt) && typeof value.canStop === "boolean"
 }
 
 function validateModel(model) {
     if (!_object(model) || model.modelVersion !== MODEL_VERSION)
         return false
+    if (model.sourceSchemaVersion !== 2 || model.sourceProtocolVersion !== 2)
+        return false
     if (!_timestamp(model.generatedAt) || !_object(model.host))
         return false
     if (!_string(model.host.hostId) || !_string(model.host.displayName))
         return false
-    if (!Array.isArray(model.sessions) || !Array.isArray(model.launchTargets) || !Array.isArray(model.capabilities) || !Array.isArray(model.warnings))
+    if (!Array.isArray(model.projects) || !Array.isArray(model.tasks) || !Array.isArray(model.inboxSessions))
         return false
-    if (model.capabilities.length !== 2 || !_validateCapability(model.capabilities[0], "codex") || !_validateCapability(model.capabilities[1], "claude"))
+    if (!Array.isArray(model.capabilities) || model.capabilities.length !== 2)
         return false
-
+    if (!Array.isArray(model.warnings) || !_object(model.truncation))
+        return false
+    if (!_validateCapability(model.capabilities[0], "codex") || !_validateCapability(model.capabilities[1], "claude"))
+        return false
     var identities = {}
-    for (var index = 0; index < model.sessions.length; index++) {
-        var session = model.sessions[index]
-        if (!_validateSession(session, model.host.hostId) || identities[session.sessionKey] === true)
+    for (var projectIndex = 0; projectIndex < model.projects.length; projectIndex++) {
+        var project = model.projects[projectIndex]
+        if (!_validateProject(project) || identities["project:" + project.projectId])
             return false
-        identities[session.sessionKey] = true
+        identities["project:" + project.projectId] = true
     }
-    var locations = {}
-    for (var targetIndex = 0; targetIndex < model.launchTargets.length; targetIndex++) {
-        var target = model.launchTargets[targetIndex]
-        var targetIdentity = target.provider + ":" + target.locationId
-        if (!_validateLaunchTarget(target) || locations[targetIdentity] === true)
+    for (var taskIndex = 0; taskIndex < model.tasks.length; taskIndex++) {
+        var task = model.tasks[taskIndex]
+        if (!_validateTask(task) || identities["task:" + task.taskId] || !identities["project:" + task.projectId])
             return false
-        locations[targetIdentity] = true
+        identities["task:" + task.taskId] = true
+    }
+    for (var inboxIndex = 0; inboxIndex < model.inboxSessions.length; inboxIndex++) {
+        var session = model.inboxSessions[inboxIndex]
+        if (!_validateInboxSession(session) || identities["session:" + session.sessionKey])
+            return false
+        identities["session:" + session.sessionKey] = true
     }
     return true
 }
@@ -137,11 +167,7 @@ function parseBridgeResponse(text) {
     try {
         envelope = JSON.parse(String(text))
     } catch (error) {
-        return _failure(
-            "bridge_invalid_json",
-            "The bridge returned an invalid response.",
-            false
-        )
+        return _failure("bridge_invalid_json", "The bridge returned an invalid response.", false)
     }
     if (!_object(envelope) || envelope.bridgeVersion !== BRIDGE_VERSION)
         return _failure("bridge_incompatible", "The bridge response is incompatible.", false)
@@ -172,42 +198,24 @@ function parseActionResponse(text) {
     if (envelope.ok !== true || !_object(envelope.action))
         return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
     if (envelope.action.kind === "stopped") {
-        if (["stopped", "already_stopped"].indexOf(envelope.action.status) === -1)
+        if (!_oneOf(envelope.action.status, ["stopped", "already_stopped"]))
             return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
         return { ok: true, action: envelope.action }
     }
-    if (["focused", "switched", "launched"].indexOf(envelope.action.kind) === -1 || !_string(envelope.action.surfaceId))
+    if (!_oneOf(envelope.action.kind, ["focused", "switched", "launched"]) || !_string(envelope.action.surfaceId))
         return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
     return { ok: true, action: envelope.action }
 }
 
-function _compareSessions(left, right) {
-    if (left.recencyAt !== right.recencyAt)
-        return right.recencyAt - left.recencyAt
-    if (left.sessionKey < right.sessionKey)
-        return -1
-    if (left.sessionKey > right.sessionKey)
-        return 1
-    return 0
-}
-
-function _basename(path) {
-    if (!_string(path))
-        return ""
-    var trimmed = path.replace(/\/+$/, "")
-    var separator = trimmed.lastIndexOf("/")
-    return separator === -1 ? trimmed : trimmed.substring(separator + 1)
-}
-
-function _displayName(session) {
-    if (_string(session.name))
-        return session.name
-    if (_string(session.projectName))
-        return session.projectName
-    var directory = _basename(session.cwd)
-    if (directory)
-        return directory
-    return (session.provider === "claude" ? "Claude " : "Codex ") + session.providerSessionId.substring(0, 8)
+function categories(model) {
+    var result = [{ id: "", name: "All tasks" }]
+    if (!validateModel(model))
+        return result
+    for (var index = 0; index < model.projects.length; index++)
+        result.push({ id: "project:" + model.projects[index].projectId, name: model.projects[index].name })
+    result.push({ id: "inbox", name: "Inbox" })
+    result.push({ id: "closed", name: "Closed" })
+    return result
 }
 
 function _age(timestamp, now) {
@@ -216,165 +224,130 @@ function _age(timestamp, now) {
         return "now"
     var minutes = Math.floor(seconds / 60)
     if (minutes < 60)
-        return String(minutes) + "m ago"
+        return String(minutes) + "m"
     var hours = Math.floor(minutes / 60)
     if (hours < 24)
-        return String(hours) + "h ago"
-    var days = Math.floor(hours / 24)
-    return String(days) + "d ago"
+        return String(hours) + "h"
+    return String(Math.floor(hours / 24)) + "d"
 }
 
-function _sourceState(session) {
-    var values = []
-    if (session.activity !== "unknown")
-        values.push("activity " + session.activity)
-    if (session.runtimePresence !== "unknown")
-        values.push("runtime " + session.runtimePresence)
-    if (session.resumability !== "unknown")
-        values.push("resume " + session.resumability)
-    if (session.attachment !== "unknown")
-        values.push("attachment " + session.attachment)
-    return values.length > 0 ? values.join(" · ") : "state unknown"
+function _stateLabel(value) {
+    if (value.status === "closed")
+        return "Closed"
+    if (!value.currentSessionKey)
+        return "Not started"
+    if (value.activity === "needs_input")
+        return "Needs input"
+    if (value.activity === "working")
+        return "Working"
+    if (value.activity === "ready")
+        return "Ready"
+    if (value.activity === "completed")
+        return "Done"
+    if (value.runtimePresence === "stopped")
+        return value.resumability === "resumable" ? "Resumable" : "Stopped"
+    return "State unknown"
 }
 
-function _searchText(session, host) {
-    return [
-        session.name,
-        session.cwd,
-        session.projectName,
-        session.locationName,
-        session.sessionKey,
-        session.providerSessionId,
-        session.provider,
-        host.displayName,
-        host.hostId
-    ].filter(function(value) {
-        return typeof value === "string"
-    }).join("\n").toLowerCase()
+function _providerIcon(provider) {
+    if (provider === "claude")
+        return "material:auto_awesome"
+    if (provider === "codex")
+        return "material:terminal"
+    return "material:task_alt"
 }
 
-function _sessionItem(session, host, now, index) {
-    var commentParts = []
-    if (_string(session.cwd))
-        commentParts.push(session.cwd)
-    if (_string(session.projectName))
-        commentParts.push("project " + session.projectName)
-    if (_string(session.locationName))
-        commentParts.push("location " + session.locationName)
-    commentParts.push(session.provider === "claude" ? "Claude" : "Codex")
-    commentParts.push(_age(session.recencyAt, now))
-    commentParts.push(_sourceState(session))
+function _taskSearchText(task) {
+    return [task.title, task.purpose, task.projectName, task.checkoutName, task.checkoutBranch, task.taskId, task.provider]
+        .filter(function(value) { return typeof value === "string" })
+        .join("\n")
+        .toLowerCase()
+}
+
+function _taskItem(task, host, now, index) {
+    var comment = [task.projectName]
+    if (!task.checkoutIsDefault && task.checkoutKind === "worktree")
+        comment.push(task.checkoutBranch || task.checkoutName || "worktree")
+    comment.push(_stateLabel(task))
+    comment.push(_age(task.recencyAt, now))
     return {
-        id: "switchboard:session:" + session.sessionKey,
-        name: _displayName(session),
-        icon: "material:terminal",
-        comment: commentParts.join(" | "),
+        id: "switchboard:task:" + task.taskId,
+        name: task.title,
+        icon: _providerIcon(task.provider),
+        comment: comment.join(" | "),
+        categories: ["Switchboard"],
+        keywords: [task.taskId, task.projectId],
+        _preScored: (task.pinned ? 4000 : 3000) - index,
+        _switchboardKind: "task",
+        _taskId: task.taskId,
+        _projectId: task.projectId,
+        _checkoutId: task.checkoutId,
+        _sessionKey: task.currentSessionKey,
+        _provider: task.provider,
+        _canStop: task.canStop,
+        _windowHost: host.displayName
+    }
+}
+
+function _inboxSearchText(session) {
+    return [session.name, session.projectName, session.checkoutName, session.sessionKey, session.providerSessionId, session.provider]
+        .filter(function(value) { return typeof value === "string" })
+        .join("\n")
+        .toLowerCase()
+}
+
+function _inboxItem(session, host, now, index) {
+    var name = session.name || (session.provider === "claude" ? "Claude " : "Codex ") + session.providerSessionId.substring(0, 8)
+    var comment = []
+    if (_string(session.projectName))
+        comment.push(session.projectName)
+    comment.push(_stateLabel({
+        status: "open",
+        currentSessionKey: session.sessionKey,
+        activity: session.activity,
+        runtimePresence: session.runtimePresence,
+        resumability: session.resumability
+    }))
+    comment.push(_age(session.recencyAt, now))
+    return {
+        id: "switchboard:inbox:" + session.sessionKey,
+        name: name,
+        icon: _providerIcon(session.provider),
+        comment: comment.join(" | "),
         categories: ["Switchboard"],
         keywords: [session.sessionKey, session.providerSessionId],
-        _preScored: 3000 - index,
+        _preScored: 2500 - index,
         _switchboardKind: "session",
         _sessionKey: session.sessionKey,
+        _projectId: session.projectId,
+        _checkoutId: session.checkoutId,
+        _provider: session.provider,
+        _canStop: session.canStop,
         _windowHost: host.displayName
     }
 }
 
-function _stopItem(session, host, index) {
+function _createItem(project, provider, title, host, index) {
+    var providerName = provider === "claude" ? "Claude" : "Codex"
     return {
-        id: "switchboard:stop:" + session.sessionKey,
-        name: "Stop " + _displayName(session),
-        icon: "material:stop_circle",
-        comment: "Gracefully stop this launch-owned Claude runtime and retire its managed tmux surface.",
+        id: "switchboard:create:" + provider + ":" + project.projectId + ":" + title,
+        name: "New " + providerName + " — " + title,
+        icon: _providerIcon(provider),
+        comment: project.name + " | Create and open task",
         categories: ["Switchboard"],
-        keywords: [session.sessionKey, session.providerSessionId, "stop", "close", "exit"],
-        _preScored: 2500 - index,
-        _switchboardKind: "stop",
-        _sessionKey: session.sessionKey,
+        keywords: [project.projectId, provider, title],
+        _preScored: 5000 - index,
+        _switchboardKind: "create",
+        _projectId: project.projectId,
+        _checkoutId: project.defaultCheckoutId,
+        _provider: provider,
+        _title: title,
         _windowHost: host.displayName
     }
 }
 
-function _stopSearchText(session, host) {
-    return _searchText(session, host) + "\nstop\nclose\nexit\nend claude session"
-}
-
-function _launchTargetSearchText(target, host) {
-    return [
-        target.projectName,
-        target.locationName,
-        target.projectId,
-        target.locationId,
-        target.provider,
-        host.displayName,
-        host.hostId,
-        "new " + target.provider + " session"
-    ].filter(function(value) {
-        return typeof value === "string"
-    }).join("\n").toLowerCase()
-}
-
-function _historyTargetSearchText(target, host) {
-    return [
-        target.projectName,
-        target.locationName,
-        target.projectId,
-        target.locationId,
-        host.displayName,
-        host.hostId,
-        "claude history resume session picker"
-    ].filter(function(value) {
-        return typeof value === "string"
-    }).join("\n").toLowerCase()
-}
-
-function _launchTargetItem(target, host, projectTargetCount, index) {
-    var providerName = target.provider === "claude" ? "Claude" : "Codex"
-    var label = target.projectName
-    if (projectTargetCount > 1 && !target.isDefault) {
-        var locationLabel = _string(target.locationName)
-            ? target.locationName
-            : target.locationId.substring(0, 8)
-        label += " — " + locationLabel
-    }
-    var comment = target.isDefault
-        ? "Start a new " + providerName + " session in the default project location."
-        : "Start a new " + providerName + " session in this configured project location."
-    return {
-        id: "switchboard:new:" + target.provider + ":" + target.projectId + ":" + target.locationId,
-        name: "New " + providerName + " — " + label,
-        icon: "material:add_to_terminal",
-        comment: comment,
-        categories: ["Switchboard"],
-        keywords: [target.projectId, target.locationId, target.provider],
-        _preScored: 4000 - index,
-        _switchboardKind: "new",
-        _projectId: target.projectId,
-        _locationId: target.locationId,
-        _provider: target.provider,
-        _windowHost: host.displayName
-    }
-}
-
-function _historyTargetItem(target, host, projectTargetCount, index) {
-    var label = target.projectName
-    if (projectTargetCount > 1 && !target.isDefault) {
-        var locationLabel = _string(target.locationName)
-            ? target.locationName
-            : target.locationId.substring(0, 8)
-        label += " — " + locationLabel
-    }
-    return {
-        id: "switchboard:history:" + target.projectId + ":" + target.locationId,
-        name: "Claude history — " + label,
-        icon: "material:history",
-        comment: "Open Claude's native session picker in this managed project location.",
-        categories: ["Switchboard"],
-        keywords: [target.projectId, target.locationId, "claude", "history", "resume"],
-        _preScored: 3900 - index,
-        _switchboardKind: "history",
-        _projectId: target.projectId,
-        _locationId: target.locationId,
-        _windowHost: host.displayName
-    }
+function _validTaskTitle(value) {
+    return value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value)
 }
 
 function _statusItem(kind, name, comment, score) {
@@ -389,60 +362,25 @@ function _statusItem(kind, name, comment, score) {
     }
 }
 
-function _degradedComment(capability) {
-    var reasons = capability.degradedReasons
-    var codes = []
-    for (var index = 0; index < reasons.length; index++) {
-        if (_object(reasons[index]) && _string(reasons[index].code))
-            codes.push(reasons[index].code)
-    }
-    var providerName = capability.provider === "claude" ? "Claude" : "Codex"
-    return codes.length > 0 ? codes.join(", ") : "The source reported degraded " + providerName + " capability."
-}
-
 function isStale(model, now, refreshSeconds) {
-    if (!validateModel(model))
-        return true
-    return now - model.generatedAt >= refreshSeconds * 1000
+    return !validateModel(model) || now - model.generatedAt >= refreshSeconds * 1000
 }
 
 function planRunRequest(state, refresh) {
     if (state.active) {
         if (state.settingsGeneration !== state.runSettingsGeneration) {
-            return {
-                pendingRefresh: state.pendingRefresh,
-                queueRun: true,
-                queueRefresh: state.runWasRefresh || refresh,
-                shouldSchedule: false
-            }
+            return { pendingRefresh: state.pendingRefresh, queueRun: true, queueRefresh: state.runWasRefresh || refresh, shouldSchedule: false }
         }
         if (refresh && !state.runWasRefresh) {
-            return {
-                pendingRefresh: state.pendingRefresh,
-                queueRun: true,
-                queueRefresh: true,
-                shouldSchedule: false
-            }
+            return { pendingRefresh: state.pendingRefresh, queueRun: true, queueRefresh: true, shouldSchedule: false }
         }
-        return {
-            pendingRefresh: state.pendingRefresh,
-            queueRun: false,
-            queueRefresh: false,
-            shouldSchedule: false
-        }
+        return { pendingRefresh: state.pendingRefresh, queueRun: false, queueRefresh: false, shouldSchedule: false }
     }
-    return {
-        pendingRefresh: state.pendingRefresh || refresh,
-        queueRun: false,
-        queueRefresh: false,
-        shouldSchedule: !state.startScheduled
-    }
+    return { pendingRefresh: state.pendingRefresh || refresh, queueRun: false, queueRefresh: false, shouldSchedule: !state.startScheduled }
 }
 
 function stoppedRunDisposition(state, deadline) {
-    if (!state.runActive || state.running)
-        return "none"
-    if (state.observedRunGeneration !== state.runGeneration)
+    if (!state.runActive || state.running || state.observedRunGeneration !== state.runGeneration)
         return "none"
     if (state.settingsGeneration !== state.runSettingsGeneration)
         return "stale"
@@ -461,73 +399,62 @@ function launcherItems(model, query, state) {
     var now = state.now
     if (model === null || model === undefined) {
         if (state.loading)
-            return [_statusItem("loading", "Loading Switchboard sessions", "Reading a validated local snapshot…", 5000)]
+            return [_statusItem("loading", "Loading Switchboard tasks", "Reading a validated local snapshot…", 5000)]
         if (state.failure)
             return [_statusItem("error", "Switchboard snapshot unavailable", state.failure.message, 5000)]
         return [_statusItem("initial", "Switchboard has not loaded yet", "A background snapshot read will start shortly.", 5000)]
     }
 
     var result = []
-    if (state.failure) {
-        result.push(_statusItem(
-            "degraded-refresh",
-            "Refresh failed — showing last good snapshot",
-            state.failure.message,
-            5000
-        ))
-    } else if (state.loading) {
-        result.push(_statusItem("refreshing", "Refreshing Switchboard sessions", "Showing the last good snapshot while refresh runs.", 5000))
-    } else if (state.stale) {
-        result.push(_statusItem("stale", "Switchboard snapshot is stale", "Source-authored state is shown without added liveness or activity guesses.", 5000))
-    }
-
-    for (var capabilityIndex = 0; capabilityIndex < model.capabilities.length; capabilityIndex++) {
-        var capability = model.capabilities[capabilityIndex]
-        var providerName = capability.provider === "claude" ? "Claude" : "Codex"
-        var statusKind = capability.provider === "codex" ? "capability" : "claude-capability"
-        if (capability.status === "degraded") {
-            result.push(_statusItem(statusKind + "-degraded", providerName + " data is degraded", _degradedComment(capability), 4900 - capabilityIndex))
-        } else if (capability.status === "neutral") {
-            result.push(_statusItem(statusKind + "-neutral", providerName + " capability is unknown", "The retained snapshot did not report a " + providerName + " capability.", 4900 - capabilityIndex))
-        }
-    }
+    if (state.failure)
+        result.push(_statusItem("degraded-refresh", "Refresh failed — showing last good snapshot", state.failure.message, 5000))
+    else if (state.loading)
+        result.push(_statusItem("refreshing", "Refreshing Switchboard tasks", "Showing the last good snapshot while refresh runs.", 5000))
+    else if (state.stale)
+        result.push(_statusItem("stale", "Switchboard snapshot is stale", "Showing retained source-authored state.", 5000))
 
     var normalizedQuery = String(query || "").trim().toLowerCase()
-    var targetCounts = {}
-    for (var targetCountIndex = 0; targetCountIndex < model.launchTargets.length; targetCountIndex++) {
-        var projectId = model.launchTargets[targetCountIndex].projectId
-        targetCounts[projectId] = (targetCounts[projectId] || 0) + 1
-    }
-    var matchedTargetCount = 0
-    for (var targetIndex = 0; targetIndex < model.launchTargets.length; targetIndex++) {
-        var launchTarget = model.launchTargets[targetIndex]
-        if (!normalizedQuery || _launchTargetSearchText(launchTarget, model.host).indexOf(normalizedQuery) !== -1) {
-            result.push(_launchTargetItem(launchTarget, model.host, targetCounts[launchTarget.projectId], targetIndex))
-            matchedTargetCount += 1
+    var category = String(state.category || "")
+    if (category === "inbox") {
+        for (var inboxIndex = 0; inboxIndex < model.inboxSessions.length; inboxIndex++) {
+            var session = model.inboxSessions[inboxIndex]
+            if (!normalizedQuery || _inboxSearchText(session).indexOf(normalizedQuery) !== -1)
+                result.push(_inboxItem(session, model.host, now, inboxIndex))
         }
-        if (launchTarget.provider === "claude" && (!normalizedQuery || _historyTargetSearchText(launchTarget, model.host).indexOf(normalizedQuery) !== -1)) {
-            result.push(_historyTargetItem(launchTarget, model.host, targetCounts[launchTarget.projectId], targetIndex))
-            matchedTargetCount += 1
+    } else {
+        for (var taskIndex = 0; taskIndex < model.tasks.length; taskIndex++) {
+            var task = model.tasks[taskIndex]
+            var categoryMatch = category === "closed"
+                ? task.status === "closed"
+                : category.indexOf("project:") === 0
+                    ? task.status === "open" && task.projectId === category.substring(8)
+                    : task.status === "open"
+            if (categoryMatch && (!normalizedQuery || _taskSearchText(task).indexOf(normalizedQuery) !== -1))
+                result.push(_taskItem(task, model.host, now, taskIndex))
+        }
+        var creationTitle = String(query || "").trim()
+        if (category.indexOf("project:") === 0 && _validTaskTitle(creationTitle)) {
+            var projectId = category.substring(8)
+            for (var projectIndex = 0; projectIndex < model.projects.length; projectIndex++) {
+                var project = model.projects[projectIndex]
+                if (project.projectId === projectId && project.defaultCheckoutId) {
+                    result.push(_createItem(project, "codex", creationTitle, model.host, 0))
+                    result.push(_createItem(project, "claude", creationTitle, model.host, 1))
+                    break
+                }
+            }
+        }
+        if (!category && model.inboxSessions.length > 0) {
+            result.push(_statusItem(
+                "inbox-summary",
+                "Inbox — " + model.inboxSessions.length + " unassigned session" + (model.inboxSessions.length === 1 ? "" : "s"),
+                "Choose the Inbox category to review or adopt them.",
+                1000
+            ))
         }
     }
 
-    var sessions = model.sessions.slice().sort(_compareSessions)
-    var matched = []
-    var matchedStops = []
-    for (var index = 0; index < sessions.length; index++) {
-        if (!normalizedQuery || _searchText(sessions[index], model.host).indexOf(normalizedQuery) !== -1)
-            matched.push(sessions[index])
-        if (sessions[index].canStop && (!normalizedQuery || _stopSearchText(sessions[index], model.host).indexOf(normalizedQuery) !== -1))
-            matchedStops.push(sessions[index])
-    }
-    for (var itemIndex = 0; itemIndex < matched.length; itemIndex++)
-        result.push(_sessionItem(matched[itemIndex], model.host, now, itemIndex))
-    for (var stopIndex = 0; stopIndex < matchedStops.length; stopIndex++)
-        result.push(_stopItem(matchedStops[stopIndex], model.host, stopIndex))
-
-    if (model.sessions.length === 0 && model.launchTargets.length === 0)
-        result.push(_statusItem("empty", "No local sessions or projects", "The validated snapshot contains no local sessions or launch targets.", 3000))
-    else if (matched.length === 0 && matchedStops.length === 0 && matchedTargetCount === 0)
-        result.push(_statusItem("no-match", "No matching Switchboard items", "Search covers sessions, projects, locations, hosts, and stable identities.", 3000))
+    if (result.length === 0)
+        result.push(_statusItem("empty", "No matching Switchboard items", "Try another category or task title.", 3000))
     return result
 }

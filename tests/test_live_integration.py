@@ -40,8 +40,8 @@ class LiveIntegrationContractTests(unittest.TestCase):
             "cwd",
             "hostId",
             "displayName",
-            "capturedSessionId",
-            "capturedSessionKey",
+            "capturedIdentity",
+            "capturedItemKey",
             "modelGeneratedAt",
         ):
             with self.subTest(forbidden=forbidden):
@@ -57,10 +57,10 @@ class LiveIntegrationContractTests(unittest.TestCase):
         self.assertNotIn("LIVE_INTEGRATION_OK dms_root", self.script)
 
     def test_exact_query_refresh_and_retention_assertions_are_mandatory(self):
-        self.assertIn("launcher.getItems(root.capturedSessionId)", self.qml)
-        self.assertIn("items[index]._sessionKey === root.capturedSessionKey", self.qml)
+        self.assertIn("launcher.getItems(root.capturedIdentity)", self.qml)
+        self.assertIn("items[index]._sessionKey === root.capturedItemKey", self.qml)
         self.assertIn("root.queryMatchedExact = matches === 1", self.qml)
-        self.assertIn('assert s["sessionCount"] > 0', self.script)
+        self.assertIn('assert s["entryCount"] > 0', self.script)
         self.assertNotIn('if [ "$session_id" ]', self.script)
         self.assertIn('s["refreshGeneratedAtAdvanced"]', self.script)
         self.assertGreaterEqual(self.script.count('s["retainedModelMatches"]'), 3)
