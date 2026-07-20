@@ -11,6 +11,7 @@ ShellRoot {
     property string retentionFingerprint: ""
     property double refreshBaselineGeneratedAt: -1
     property bool queryMatchedExact: false
+    property bool cacheReloaded: false
 
     function modelFingerprint() {
         return launcher.lastGoodModel ? JSON.stringify(launcher.lastGoodModel) : "";
@@ -27,6 +28,8 @@ ShellRoot {
             "hasModel": model !== null,
             "entryCount": tasks.length + inbox.length,
             "failureCode": launcher.currentFailure ? launcher.currentFailure.code : "",
+            "cacheReloaded": root.cacheReloaded,
+            "validatorRejectedInvalid": launcher.parseCurrentBridgeResponse("{\"bridgeVersion\":1}").error.code === "bridge_incompatible" && !launcher.validateFrontendModel({}),
             "queryMatchedExact": root.queryMatchedExact,
             "refreshGeneratedAtAdvanced": model !== null && root.refreshBaselineGeneratedAt >= 0 && model.generatedAt > root.refreshBaselineGeneratedAt,
             "retentionBaselineCount": root.retentionEntryCount,
@@ -43,6 +46,7 @@ ShellRoot {
         property string swbctl: Quickshell.env("SWITCHBOARD_LIVE_SWBCTL") || "swbctl"
         property int timeoutMs: 10000
         property int refreshSeconds: 300
+        property var pluginState: ({})
         property var availablePlugins: ({
                 "switchboard": {
                     "id": "switchboard",
@@ -80,6 +84,18 @@ ShellRoot {
                 refreshSeconds = Number(value);
             pluginDataChanged(pluginId);
             return true;
+        }
+
+        function loadPluginState(pluginId, key, defaultValue) {
+            if (pluginId !== "switchboard")
+                return defaultValue;
+            return pluginState[key] === undefined ? defaultValue : pluginState[key];
+        }
+
+        function savePluginState(pluginId, key, value) {
+            if (pluginId !== "switchboard")
+                return;
+            pluginState[key] = value;
         }
 
         function getPluginVariants(pluginId) {
@@ -134,6 +150,14 @@ ShellRoot {
                     matches += 1;
             }
             root.queryMatchedExact = matches === 1;
+            return root.summary();
+        }
+
+        function reloadCachedModel(): string {
+            const fingerprint = root.modelFingerprint();
+            launcher.lastGoodModel = null;
+            launcher.loadCachedModel();
+            root.cacheReloaded = fingerprint !== "" && root.modelFingerprint() === fingerprint;
             return root.summary();
         }
 

@@ -331,6 +331,43 @@ succeeded, plugin status was `loaded`, and the post-enable journal contained
 only the normal load line with no Switchboard category or component warning.
 The active Claude session was never stopped, restarted, or signalled.
 
+## Phase 4E warm-picker recovery
+
+The 2026-07-20 corrective exercise used DMS 1.5.2, Quickshell 0.3.0, the
+installed core `0.2.0`, and adapter `0.2.1`. Direct bridge output was already a
+valid bridge-v2/model-v3 envelope; the incompatible row came from a
+shell-retained JavaScript parser while DMS ignored the plugin's asynchronous
+`itemsChanged()` signal.
+
+Bridge-envelope and cache validation now lives in the cache-busted launcher
+component. A valid bounded frontend model is stored under the versioned
+`last_good_model_v3_bridge2` DMS plugin-state key and fully revalidated before
+use. The installed-import harness passed a cache round-trip in addition to its
+initial read, query, settings, refresh, retained-failure, and recovery gates.
+
+After one DMS-only restart to clear the development shell's deliberately
+polluted JavaScript filename cache, the first available bounded plugin status
+was already `hasModel=true` while the retained read was still active. It
+reported bridge 2, model 3, one task, 54 Inbox sessions, and no failure. The
+same generation then became idle and healthy. Opening `sb:` succeeded without
+requiring a query mutation to replace an initial reading row.
+
+A subsequent `plugins reload switchboard` succeeded without another shell
+restart. The DMS PID stayed fixed across that reload, and every Claude and
+Codex PID stayed identical across both the reload and the DMS-only restart.
+The versioned cache file contained model 3/source schema 2 with the same
+aggregate counts. The final startup/reload journal contained normal plugin
+load lines and no Switchboard bridge, model, component, or category error.
+
+DMS 1.5.2 destroys its plugin-state `FileView` writer on plugin unload while
+retaining the in-memory state table. Switchboard therefore skips an unchanged
+retained-cache rewrite after warm reload and uses one delayed follow-up for a
+first cache file or a later full refresh. If source state really changed or the
+cache is stale, DMS may still log one writer-recreation warning before the
+follow-up succeeds; the bounded cache, picker rows, and bridge health are not
+affected. Switchboard preserves eventual atomic persistence without taking
+ownership of DMS's state path.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

@@ -1,9 +1,14 @@
-// Version the import URL with the projected model contract so a DMS plugin
-// reload cannot retain an older engine-cached implementation.
+// Version this physical module with the projected model contract. Reload-
+// significant bridge-envelope and cache validation lives in the cache-busted
+// launcher component so same-contract fixes do not depend on reloading JS.
 var BRIDGE_VERSION = 2
 var ACTION_VERSION = 2
 var MODEL_VERSION = 3
 var MAX_EXECUTABLE_LENGTH = 4096
+var MAX_MODEL_PROJECTS = 1000
+var MAX_MODEL_TASKS = 1000
+var MAX_MODEL_SESSIONS = 1000
+var MAX_MODEL_WARNINGS = 256
 
 function boundedExecutable(value, fallback) {
     var defaultValue = String(fallback || "swbctl")
@@ -134,9 +139,13 @@ function validateModel(model) {
         return false
     if (!Array.isArray(model.projects) || !Array.isArray(model.tasks) || !Array.isArray(model.inboxSessions))
         return false
+    if (model.projects.length > MAX_MODEL_PROJECTS || model.tasks.length > MAX_MODEL_TASKS || model.inboxSessions.length > MAX_MODEL_SESSIONS)
+        return false
     if (!Array.isArray(model.capabilities) || model.capabilities.length !== 2)
         return false
     if (!Array.isArray(model.warnings) || !_object(model.truncation))
+        return false
+    if (model.warnings.length > MAX_MODEL_WARNINGS)
         return false
     if (!_validateCapability(model.capabilities[0], "codex") || !_validateCapability(model.capabilities[1], "claude"))
         return false

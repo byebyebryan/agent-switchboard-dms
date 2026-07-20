@@ -63,9 +63,13 @@ class LiveIntegrationContractTests(unittest.TestCase):
         self.assertIn('assert s["entryCount"] > 0', self.script)
         self.assertNotIn('if [ "$session_id" ]', self.script)
         self.assertIn('s["refreshGeneratedAtAdvanced"]', self.script)
+        self.assertIn('s["cacheReloaded"]', self.script)
+        self.assertIn('s["validatorRejectedInvalid"]', self.script)
+        self.assertIn("launcher.loadCachedModel()", self.qml)
         self.assertGreaterEqual(self.script.count('s["retainedModelMatches"]'), 3)
         self.assertGreaterEqual(self.script.count("expected > 0"), 2)
         self.assertGreaterEqual(self.script.count('s["runGeneration"] > minimum'), 3)
+        self.assertGreaterEqual(self.script.count('tail -n 80 "$log_file"'), 2)
 
     def test_private_state_and_process_group_are_required(self):
         self.assertIn('cp -a -- "$state_source"', self.script)

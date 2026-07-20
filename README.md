@@ -7,8 +7,9 @@ separately. Codex, Claude Code, and not-yet-started tasks use distinct icons;
 normal rows show concise project, optional nondefault worktree, state, and age
 instead of absolute paths.
 
-The launcher reads a validated Snapshot v2 asynchronously into an in-memory
-last-good cache. Selecting a task invokes `prepare-task`; selecting an Inbox
+The launcher reads a validated Snapshot v2 asynchronously into a last-good
+cache and persists only that privacy-bounded frontend model in DMS plugin
+state. Selecting a task invokes `prepare-task`; selecting an Inbox
 session invokes `prepare-open`. In a project category, a nonempty query offers
 Codex and Claude creation rows using the query as the task title. The desktop
 helper generates stable task and request UUIDs and calls atomic new-task
@@ -49,9 +50,19 @@ Missing observations and stale data are not converted into activity guesses,
 and an absent provider capability remains neutral.
 
 DMS 1.5.0 does not consume launcher `itemsChanged()` as a live result-list
-mutation. The refreshed cache appears when the launcher is reopened or the
-query changes. Dynamic project categories use DMS's native launcher category
-contract.
+mutation. A validated persisted model makes normal shell starts and plugin
+reloads immediately useful while a new read runs. Only a first install, a
+cleared cache, or an invalid cache can expose the initial reading row; if that
+row is already open, the new result appears when the launcher is reopened or
+the query changes. Dynamic project categories use DMS's native launcher
+category contract.
+
+Bounded operational status is available without model contents or stable IDs:
+
+```sh
+dms ipc call switchboard-launcher status
+dms ipc call switchboard-launcher refresh
+```
 
 ## Direct helper use
 

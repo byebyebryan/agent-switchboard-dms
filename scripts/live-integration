@@ -134,6 +134,9 @@ wait_for() {
         attempts=$((attempts + 1))
         sleep 0.05
     done
+    if [ -f "$log_file" ]; then
+        tail -n 80 "$log_file" >&2 || true
+    fi
     die "timed out waiting for $description"
 }
 
@@ -144,8 +147,12 @@ json_assert() {
 }
 
 healthy=$(wait_for "initial retained snapshot" 'import json, os, sys; s=json.loads(os.environ["STATE"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"]))')
-json_assert "$healthy" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["settingsHeightPositive"]; assert s["swbctlConfigured"]'
+json_assert "$healthy" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["settingsHeightPositive"]; assert s["swbctlConfigured"]; assert s["validatorRejectedInvalid"]'
 printf 'INITIAL %s\n' "$healthy"
+
+cached=$(ipc reloadCachedModel)
+json_assert "$cached" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["hasModel"] and s["cacheReloaded"] and s["failureCode"] == ""'
+printf 'CACHE %s\n' "$cached"
 
 queried=$(ipc captureBaseline)
 json_assert "$queried" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["queryMatchedExact"]'

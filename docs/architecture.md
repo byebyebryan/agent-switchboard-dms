@@ -70,23 +70,39 @@ not duplicate launcher rows. Stop appears only when the source model projects
 
 `getItems(query)` is synchronous and reads only the last-good model. It uses
 `Qt.callLater` to schedule a retained read or one coalesced refresh. A valid
-complete response atomically replaces the cache. Failure retains the last-good
-snapshot and adds an explicit status row. Missing observations and stale data
-remain source truth; an absent provider record becomes neutral Codex or Claude
-capability rather than a failure.
+complete response atomically replaces the cache and stores that same bounded
+frontend model under a bridge/model-versioned DMS plugin-state key. A new QML
+instance synchronously loads and fully revalidates that cache before starting
+its asynchronous retained read. Invalid or absent plugin state is ignored;
+absolute paths, transcripts, prompts, and private provider payloads never enter
+it. A single delayed follow-up write makes first-file creation and later full
+refresh persistence reliable on the verified DMS 1.5 state API. A retained
+read after a warm plugin reload ignores source-generation time when comparing
+models, so it does not rewrite an otherwise unchanged cache; real task, Inbox,
+capability, warning, or host changes still persist.
+Failure retains the last-good snapshot and adds an explicit status row.
+One initial no-model parse failure gets one delayed automatic retry; the retry
+budget resets only after success or a settings change.
+Missing observations and stale data remain source truth. An absent provider
+record becomes neutral Codex or Claude capability rather than a failure.
 
-DMS 1.5.0 does not connect that signal to live launcher-result mutation, so
-new rows become visible when the launcher is reopened or the query changes.
+DMS 1.5.0 does not connect that signal to live launcher-result mutation. The
+persisted cache removes that limitation from normal shell starts and plugin
+reloads, but after a first install or cleared/invalid cache the new rows become
+visible when the launcher is reopened or the query changes.
 Timeout handling uses `Process.signal(15)` and the helper's process-group guard.
 
-The JavaScript projection module is named `SwitchboardModelV3.js`, with an
-import qualifier that exactly matches its basename. DMS cache-busts the plugin
-component on reload but Qt retains relative JavaScript imports by URL for the
-shell lifetime. Versioning that URL with the frontend model contract prevents
-a `0.2.0` reload from silently retaining the pre-v3 implementation. A future
-model-contract bump must therefore use a correspondingly versioned module URL;
-same-version development edits require a fresh shell process or another new
-module URL before live evidence is claimed.
+The JavaScript projection module remains `SwitchboardModelV3.js` for
+contract-stable filtering and row construction. DMS cache-busts the launcher
+QML component on reload while Qt retains relative JavaScript imports for the
+shell lifetime. Reload-significant bridge-envelope and persisted-cache
+validation therefore lives in `SwitchboardLauncher.qml`, not the retained
+module. A same-contract bridge fix takes effect on plugin reload; only a true
+model-contract bump requires a new physical `V` module and a fresh shell.
+
+The `switchboard-launcher` IPC target exposes only versions, idle/generation
+state, aggregate task/Inbox counts, and a stable failure code. It never emits
+the model, item text, paths, host IDs, or provider/session IDs.
 
 ## Non-goals
 
@@ -100,4 +116,4 @@ Repositories/worktrees are discovered by core; the plugin never mutates them.
 Phases 1 through 3C used Snapshot v1, project locations, session rows, and
 separate launch/history/stop rows. Those contracts are preserved in Git
 history and the implementation-plan chronology, but Phase 4D supersedes them
-for the current 0.2.0 runtime.
+for the current core `0.2.0` and DMS adapter `0.2.1` runtime.

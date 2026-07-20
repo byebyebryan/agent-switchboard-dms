@@ -109,6 +109,11 @@ function kinds(items, kind) {
 }
 
 {
+    assert.strictEqual(modelApi.validateModel(model()), true)
+    assert.strictEqual(modelApi.validateModel(model({ tasks: Array(1001).fill(task()) })), false)
+}
+
+{
     const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 2, ok: true, model: model() }))
     assert.strictEqual(parsed.ok, true)
     assert.strictEqual(parsed.model.modelVersion, 3)
@@ -261,4 +266,4 @@ function kinds(items, kind) {
     }, false), "start_failed")
 }
 
-console.log("SwitchboardModelV3.js: 13 task-first behavior groups passed")
+console.log("SwitchboardModelV3.js: 14 task-first behavior groups passed")

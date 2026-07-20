@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -20,7 +21,7 @@ class ManifestContractTests(unittest.TestCase):
             "id": "switchboard",
             "name": "Switchboard",
             "description": "Agent Switchboard launcher integration for DMS.",
-            "version": "0.2.0",
+            "version": "0.2.1",
             "author": "Bryan Bai",
             "type": "launcher",
             "component": "./SwitchboardLauncher.qml",
@@ -81,7 +82,7 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("function getContextMenuActions(item)", self.launcher)
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
 
-    def test_model_module_url_is_versioned_and_instance_scoped(self):
+    def test_model_module_is_contract_versioned_and_instance_scoped(self):
         expected_import = 'import "SwitchboardModelV3.js" as SwitchboardModelV3'
         self.assertIn(expected_import, self.launcher)
         self.assertIn(expected_import, self.settings)
@@ -109,6 +110,8 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("refreshProcess.command = command", self.launcher)
         self.assertIn("actionProcess.command", self.launcher)
         self.assertIn("SwitchboardModelV3.parseActionResponse", self.launcher)
+        self.assertIn("parseCurrentBridgeResponse(runStdout)", self.launcher)
+        self.assertNotIn("SwitchboardModelV3.parseBridgeResponse(runStdout)", self.launcher)
         self.assertIn('"--swbctl"', self.launcher)
         self.assertIn('"--timeout-ms"', self.launcher)
         self.assertIn('command.push("--refresh")', self.launcher)
@@ -149,10 +152,27 @@ class QmlScaffoldTests(unittest.TestCase):
     def test_failure_retains_last_good_model(self):
         failure_path = self.launcher.split("function maybeFinishRun()", 1)[1]
         failure_path = failure_path.split("Timer {", 1)[0]
-        self.assertEqual(failure_path.count("lastGoodModel ="), 1)
+        self.assertEqual(len(re.findall(r"lastGoodModel\s*=(?!=)", failure_path)), 1)
         self.assertIn("runSettingsGeneration !== settingsGeneration", failure_path)
-        self.assertIn("SwitchboardModelV3.shouldAcceptRunResult", failure_path)
+        self.assertIn("runExitCode === 0 && parsed.ok", failure_path)
         self.assertIn("setFailure(parsed.error.code", failure_path)
+
+    def test_validated_last_good_model_is_persisted_and_diagnostics_are_bounded(self):
+        self.assertIn('modelStateKey: "last_good_model_v3_bridge2"', self.launcher)
+        self.assertIn("pluginService.loadPluginState", self.launcher)
+        self.assertIn("validateFrontendModel(cached)", self.launcher)
+        self.assertIn("function parseCurrentBridgeResponse(text)", self.launcher)
+        self.assertIn("pluginService.savePluginState", self.launcher)
+        self.assertIn("function persistentModelFingerprint(model)", self.launcher)
+        self.assertIn("if (!cacheLoadedFromState || runWasRefresh || cacheChanged)", self.launcher)
+        self.assertIn("saveCachedModel(parsed.model, runWasRefresh || cacheChanged)", self.launcher)
+        self.assertIn("id: cacheWriteFollowup", self.launcher)
+        self.assertIn("interval: 350", self.launcher)
+        self.assertIn('target: "switchboard-launcher"', self.launcher)
+        diagnostics = self.launcher.split("IpcHandler {", 1)[1]
+        for forbidden in ("runStdout", "sessionKey", "providerSessionId", "hostId"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, diagnostics)
 
 
 class DocumentationContractTests(unittest.TestCase):

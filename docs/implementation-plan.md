@@ -4,8 +4,9 @@
 > Snapshot v1/location/session-list implementation. Phase 4D replaces that
 > runtime with Snapshot v2, repositories/checkouts/tasks, frontend model v3,
 > native project/Inbox/Closed categories, atomic `prepare-task`, and context
-> actions. See `architecture.md` and `bridge-contract.md` for the current
-> 0.2.0 contract.
+> actions. Phase 4E hardens that frontend against shell-local JavaScript cache
+> retention and cold QML instances. See `architecture.md` and
+> `bridge-contract.md` for the current core `0.2.0` / adapter `0.2.1` contract.
 
 ## Phase 0: discovery and contract lock (complete)
 
@@ -250,6 +251,38 @@ adapter projected one explicit task and 49 Inbox sessions, exposed all native
 categories and both provider creation choices, reopened the same managed tmux
 session without another provider process, and produced no post-load component
 or category warnings. Exact evidence is in `docs/live-integration.md`.
+
+## Phase 4E: reload-safe picker cache and recovery (complete)
+
+This corrective loop addresses two coupled DMS host behaviors observed after
+the task-first rollout:
+
+- Qt may retain a relative JavaScript import even after DMS reloads the QML
+  component. Contract-stable filtering stays in `SwitchboardModelV3.js`, while
+  bridge-envelope and persisted-cache validation moves into the cache-busted
+  launcher component. Same-contract recovery no longer depends on replacing
+  or reloading the retained JavaScript module.
+- DMS 1.5.0 does not consume a launcher's `itemsChanged()` signal. Each valid
+  model is now stored under a bridge/model-versioned DMS plugin-state key and
+  fully revalidated synchronously when a new launcher instance starts. Normal
+  shell starts and plugin reloads therefore have rows immediately while the
+  asynchronous retained read runs.
+- A first install or cleared/invalid cache remains subject to the DMS repaint
+  limitation. One initial no-model parse failure retries automatically once;
+  it does not create an unbounded process loop.
+- The `switchboard-launcher` IPC target reports only bridge/model versions,
+  idle/generation state, aggregate counts, and a stable failure code. This
+  makes the exact live frontend state inspectable without exposing model rows,
+  paths, host identity, or provider/session IDs.
+
+Acceptance requires deterministic model/cache tests, the installed-import
+component harness including cache round-trip, QML formatting, one real plugin
+reload without a DMS restart, a healthy bounded IPC status, a persisted
+versioned cache file, and no new Switchboard load or bridge failure in the
+post-reload journal. It must not signal or restart Codex, Claude, or tmux
+provider sessions. The final in-place plugin reload must keep the DMS service
+PID stable; any one-time recovery restart for a preexisting development cache
+must be recorded separately.
 
 ## Final audit and publication
 
