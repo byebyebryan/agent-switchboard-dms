@@ -243,7 +243,7 @@ layering aliases over it:
 - Claude history remains a project/checkout context action. Stop remains a
   conservative current-session action and is never implied by closing a task.
 
-Implementation acceptance is 90 Python tests, 13 deterministic JavaScript
+Implementation acceptance is 91 Python tests, 13 deterministic JavaScript
 behavior groups, Qt 6 QML formatting, Ruff, package Pyright, and whitespace
 checks. Guarded installed acceptance also passed against core `0.2.0`: the
 adapter projected one explicit task and 49 Inbox sessions, exposed all native

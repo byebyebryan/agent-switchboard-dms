@@ -63,12 +63,6 @@ class QmlScaffoldTests(unittest.TestCase):
         )[0]
         self.assertIn("SwitchboardModelV3.launcherItems", read_path)
         self.assertIn("Qt.callLater(root.scheduleForRead)", read_path)
-
-    def test_model_module_url_is_versioned_and_instance_scoped(self):
-        expected_import = 'import "SwitchboardModelV3.js" as SwitchboardModelV3'
-        self.assertIn(expected_import, self.launcher)
-        self.assertIn(expected_import, self.settings)
-        self.assertNotIn(".pragma library", self.model)
         self.assertNotIn("refreshProcess.running = true", read_path)
         self.assertNotIn("swbctlExecutable", read_path)
         self.assertRegex(self.launcher, r"function\s+executeItem\s*\(\s*item\s*\)")
@@ -86,6 +80,12 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("function getCategories()", self.launcher)
         self.assertIn("function getContextMenuActions(item)", self.launcher)
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
+
+    def test_model_module_url_is_versioned_and_instance_scoped(self):
+        expected_import = 'import "SwitchboardModelV3.js" as SwitchboardModelV3'
+        self.assertIn(expected_import, self.launcher)
+        self.assertIn(expected_import, self.settings)
+        self.assertNotIn(".pragma library", self.model)
 
     def test_settings_use_verified_dms_components(self):
         self.assertIn("PluginSettings {", self.settings)
