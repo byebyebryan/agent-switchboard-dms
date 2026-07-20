@@ -1,7 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "SwitchboardModel.js" as SwitchboardModel
+import "SwitchboardModelV3.js" as SwitchboardModelV3
 import qs.Common
 
 Item {
@@ -57,9 +57,9 @@ Item {
             return;
 
         const configuredExecutable = pluginService.loadPluginData(pluginName, "swbctl", "swbctl");
-        const nextExecutable = SwitchboardModel.boundedExecutable(configuredExecutable);
+        const nextExecutable = SwitchboardModelV3.boundedExecutable(configuredExecutable);
         const configuredTerminal = pluginService.loadPluginData(pluginName, "terminal", "ghostty");
-        const nextTerminal = SwitchboardModel.boundedExecutable(configuredTerminal, "ghostty");
+        const nextTerminal = SwitchboardModelV3.boundedExecutable(configuredTerminal, "ghostty");
         const nextTimeout = boundedInteger(pluginService.loadPluginData(pluginName, "timeout_ms", 10000), 100, 60000, 10000);
         const nextRefresh = boundedInteger(pluginService.loadPluginData(pluginName, "refresh_seconds", 15), 5, 300, 15);
         const changed = nextExecutable !== swbctlExecutable || nextTerminal !== terminalExecutable || nextTimeout !== timeoutMs || nextRefresh !== refreshSeconds;
@@ -72,7 +72,7 @@ Item {
     }
 
     function snapshotIsStale(now) {
-        return lastGoodModel !== null && SwitchboardModel.isStale(lastGoodModel, now, refreshSeconds);
+        return lastGoodModel !== null && SwitchboardModelV3.isStale(lastGoodModel, now, refreshSeconds);
     }
 
     function scheduleForRead() {
@@ -88,7 +88,7 @@ Item {
     function getItems(query) {
         Qt.callLater(root.scheduleForRead);
         const now = Date.now();
-        return SwitchboardModel.launcherItems(lastGoodModel, query, {
+        return SwitchboardModelV3.launcherItems(lastGoodModel, query, {
             "now": now,
             "loading": runActive || startScheduled,
             "stale": snapshotIsStale(now),
@@ -98,7 +98,7 @@ Item {
     }
 
     function getCategories() {
-        return SwitchboardModel.categories(lastGoodModel);
+        return SwitchboardModelV3.launcherCategories(lastGoodModel);
     }
 
     function setCategory(categoryId) {
@@ -191,7 +191,7 @@ Item {
 
         actionDeadline.stop();
         if (!actionExpired) {
-            const parsed = SwitchboardModel.parseActionResponse(actionStdout);
+            const parsed = SwitchboardModelV3.parseActionResponse(actionStdout);
             if (actionExitCode === 0 && parsed.ok) {
                 currentFailure = null;
                 scheduleRun(true);
@@ -206,7 +206,7 @@ Item {
     }
 
     function scheduleRun(refresh) {
-        const plan = SwitchboardModel.planRunRequest({
+        const plan = SwitchboardModelV3.planRunRequest({
             "active": runActive || refreshProcess.running,
             "runWasRefresh": runWasRefresh,
             "settingsGeneration": settingsGeneration,
@@ -281,7 +281,7 @@ Item {
     }
 
     function finishStoppedRunIfNeeded(generation, deadline) {
-        const disposition = SwitchboardModel.stoppedRunDisposition({
+        const disposition = SwitchboardModelV3.stoppedRunDisposition({
             "runActive": runActive,
             "running": refreshProcess.running,
             "observedRunGeneration": generation,
@@ -321,8 +321,8 @@ Item {
             queuedRun = true;
             queuedRefresh = queuedRefresh || runWasRefresh;
         } else if (!runExpired) {
-            const parsed = SwitchboardModel.parseBridgeResponse(runStdout);
-            if (SwitchboardModel.shouldAcceptRunResult(runSettingsGeneration, settingsGeneration, runExpired, runExitCode, parsed.ok)) {
+            const parsed = SwitchboardModelV3.parseBridgeResponse(runStdout);
+            if (SwitchboardModelV3.shouldAcceptRunResult(runSettingsGeneration, settingsGeneration, runExpired, runExitCode, parsed.ok)) {
                 lastGoodModel = parsed.model;
                 currentFailure = null;
                 if (!runWasRefresh && snapshotIsStale(Date.now())) {

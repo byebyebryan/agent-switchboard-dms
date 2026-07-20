@@ -126,6 +126,7 @@ ShellRoot {
             root.capturedIdentity = useTask ? tasks[0].title : inbox[0].providerSessionId;
             root.capturedItemKey = useTask ? tasks[0].taskId : inbox[0].sessionKey;
             root.refreshBaselineGeneratedAt = model.generatedAt;
+            launcher.setCategory(useTask ? "" : "inbox");
             const items = launcher.getItems(root.capturedIdentity);
             let matches = 0;
             for (let index = 0; index < items.length; index++) {

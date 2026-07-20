@@ -1,5 +1,5 @@
-.pragma library
-
+// Version the import URL with the projected model contract so a DMS plugin
+// reload cannot retain an older engine-cached implementation.
 var BRIDGE_VERSION = 2
 var ACTION_VERSION = 2
 var MODEL_VERSION = 3
@@ -207,7 +207,7 @@ function parseActionResponse(text) {
     return { ok: true, action: envelope.action }
 }
 
-function categories(model) {
+function launcherCategories(model) {
     var result = [{ id: "", name: "All tasks" }]
     if (!validateModel(model))
         return result

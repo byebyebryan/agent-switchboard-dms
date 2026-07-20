@@ -6,11 +6,11 @@ const path = require("path")
 const vm = require("vm")
 
 const root = path.resolve(__dirname, "..")
-const source = fs.readFileSync(path.join(root, "SwitchboardModel.js"), "utf8")
+const source = fs.readFileSync(path.join(root, "SwitchboardModelV3.js"), "utf8")
     .replace(/^\.pragma library\s*$/m, "")
 const modelApi = {}
 vm.createContext(modelApi)
-vm.runInContext(source, modelApi, { filename: "SwitchboardModel.js" })
+vm.runInContext(source, modelApi, { filename: "SwitchboardModelV3.js" })
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111"
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222"
@@ -115,14 +115,14 @@ function kinds(items, kind) {
 }
 
 {
-    const categories = modelApi.categories(model())
+    const categories = modelApi.launcherCategories(model())
     assert.deepStrictEqual(JSON.parse(JSON.stringify(categories)), [
         { id: "", name: "All tasks" },
         { id: `project:${PROJECT_ID}`, name: "Agent Switchboard" },
         { id: "inbox", name: "Inbox" },
         { id: "closed", name: "Closed" }
     ])
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(modelApi.categories(null))), [{ id: "", name: "All tasks" }])
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(modelApi.launcherCategories(null))), [{ id: "", name: "All tasks" }])
 }
 
 {
@@ -261,4 +261,4 @@ function kinds(items, kind) {
     }, false), "start_failed")
 }
 
-console.log("SwitchboardModel.js: 13 task-first behavior groups passed")
+console.log("SwitchboardModelV3.js: 13 task-first behavior groups passed")

@@ -95,7 +95,7 @@ for directory in Common Modules Services Widgets; do
 done
 cp -- "$repo_root/tests/live/Shell.qml" "$temporary/shell.qml"
 cp -- "$repo_root/SwitchboardLauncher.qml" "$repo_root/SwitchboardSettings.qml" \
-    "$repo_root/SwitchboardModel.js" "$repo_root/switchboard-bridge" "$temporary/"
+    "$repo_root/SwitchboardModelV3.js" "$repo_root/switchboard-bridge" "$temporary/"
 cp -a -- "$repo_root/switchboard_dms" "$temporary/switchboard_dms"
 
 live_defer_traps
@@ -121,6 +121,9 @@ wait_for() {
     attempts=0
     while [ "$attempts" -lt 200 ]; do
         if ! kill -0 "$harness_pid" 2>/dev/null; then
+            if [ -f "$log_file" ]; then
+                tail -n 80 "$log_file" >&2 || true
+            fi
             die "Quickshell exited while waiting for $description"
         fi
         state=$(ipc status 2>/dev/null || true)
