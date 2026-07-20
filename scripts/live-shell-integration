@@ -382,7 +382,7 @@ dms ipc call launcher openQuery 'sb:switchboard' >/dev/null
 wait_sampler || die "retained process sample was incomplete"
 [ "$(wc -l <"$retained_processes")" -eq 2 ]
 rg -qx 'BRIDGE_RETAINED' "$retained_processes"
-rg -qx 'SNAPSHOT_RETAINED' "$retained_processes"
+rg -qx 'FLEET_RETAINED' "$retained_processes"
 
 sleep 6
 dms ipc call launcher close >/dev/null
@@ -392,7 +392,7 @@ dms ipc call launcher openQuery 'sb:switchboard' >/dev/null
 wait_sampler || die "refresh process sample was incomplete"
 [ "$(wc -l <"$refresh_processes")" -eq 2 ]
 rg -qx 'BRIDGE_REFRESH' "$refresh_processes"
-rg -qx 'SNAPSHOT_REFRESH' "$refresh_processes"
+rg -qx 'FLEET_REFRESH' "$refresh_processes"
 
 journal_log=$evidence/dms-journal.log
 journalctl --user -u dms.service --after-cursor "$journal_cursor" --no-pager -o short-iso-precise >"$journal_log"

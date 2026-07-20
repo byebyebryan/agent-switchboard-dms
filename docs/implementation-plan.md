@@ -5,8 +5,10 @@
 > runtime with Snapshot v2, repositories/checkouts/tasks, frontend model v3,
 > native project/Inbox/Closed categories, atomic `prepare-task`, and context
 > actions. Phase 4E hardens that frontend against shell-local JavaScript cache
-> retention and cold QML instances. See `architecture.md` and
-> `bridge-contract.md` for the current core `0.2.0` / adapter `0.2.1` contract.
+> retention and cold QML instances. Phase 5 advances the current adapter to
+> Fleet v1, frontend model v4, bridge/action v3, and host-qualified local-core
+> actions. See `architecture.md` and `bridge-contract.md` for the current core
+> `0.2.0` development / adapter `0.3.0` contract.
 
 ## Phase 0: discovery and contract lock (complete)
 
@@ -284,6 +286,39 @@ provider sessions. The final in-place plugin reload must keep the DMS service
 PID stable; any one-time recovery restart for a preexisting development cache
 must be recorded separately.
 
+## Phase 5: Fleet federation and remote-owner routing (implementation complete)
+
+This increment completes the DMS implementation half of Agent Switchboard's
+pull-based SSH federation slice:
+
+- the read bridge invokes only local `swbctl fleet --json` or
+  `swbctl fleet --refresh --json`, validates Fleet v1 and every embedded
+  Snapshot v2, and projects bounded frontend model v4;
+- host state exposes only display name, stable HostId, reachability, staleness,
+  and bounded errors; SSH targets and remote configuration remain in core;
+- compatible ProjectIds share categories but retain eligible host-local
+  default-checkout routes;
+- task identity is `(HostId, TaskId)`, Inbox remains host-qualified, and remote
+  rows add the host to their compact second line;
+- project queries emit provider creation choices per eligible host and name the
+  destination when several routes exist;
+- every prepare, history, stop, select, and attach action carries the owning
+  HostId through local `swbctl`; DMS never constructs SSH;
+- returned plans for another host fail closed, and managed desktop identity
+  hashes HostId with the opaque surface token; and
+- the persisted cache moves to `last_good_model_v4_bridge3` and the physical
+  JavaScript module moves to `SwitchboardModelV4.js`.
+
+Automated acceptance covers two-host project merging, duplicate TaskIds on
+different hosts, remote/offline/stale presentation, per-host creation rows,
+never-seen remotes, malformed Fleet rejection, host-qualified exact argv,
+plan-host mismatch, process cleanup, cache validation, and the private-state
+Quickshell harness. Guarded installed acceptance must not restart or signal
+active Codex, Claude, or tmux sessions. A true remote open/create/continuation
+exercise additionally requires an explicitly configured reachable test host;
+local-only acceptance must be recorded as such rather than presented as SSH
+parity.
+
 ## Final audit and publication
 
 - Re-run all unit, JSON, shell, QML, fixture, and whitespace checks.
@@ -292,7 +327,7 @@ must be recorded separately.
 - Publish both repositories only after the full gates pass and the user has
   explicitly authorized the push.
 
-SSH, arbitrary working-directory launch, project-catalog editing, direct
-tmux locator or provider-launch logic, non-niri/non-Ghostty adapters, chezmoi
-cutover, and a rich widget remain non-goals for this increment. The legacy
-plugin remains the remote-host fallback.
+SSH construction inside DMS, arbitrary working-directory launch,
+project-catalog editing, direct tmux locator or provider-launch logic,
+non-niri/non-Ghostty adapters, chezmoi cutover, and a rich widget remain
+non-goals for this increment.

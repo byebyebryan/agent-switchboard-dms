@@ -212,9 +212,9 @@ class LiveShellIntegrationContractTests(unittest.TestCase):
             '[ "$baseline_plugin_count" -gt 0 ]',
             'cmp -s "$expected_plugins" "$during_plugins"',
             "BRIDGE_RETAINED",
-            "SNAPSHOT_RETAINED",
+            "FLEET_RETAINED",
             "BRIDGE_REFRESH",
-            "SNAPSHOT_REFRESH",
+            "FLEET_REFRESH",
             'cmp -s "$baseline_plugins" "$final_plugins"',
             "stat -c '%a:%u:%g'",
             'has("switchboard")',
@@ -223,8 +223,8 @@ class LiveShellIntegrationContractTests(unittest.TestCase):
                 self.assertIn(contract, self.script)
         for contract in (
             'bridge_tail = ["--swbctl", swbctl, "--timeout-ms", "10000"]',
-            'snapshot_tail = ["snapshot", "--json"]',
-            'snapshot_tail = ["snapshot", "--reconcile", "full", "--json"]',
+            'fleet_tail = ["fleet", "--json"]',
+            'fleet_tail = ["fleet", "--refresh", "--json"]',
         ):
             with self.subTest(sampler_contract=contract):
                 self.assertIn(contract, self.sampler)

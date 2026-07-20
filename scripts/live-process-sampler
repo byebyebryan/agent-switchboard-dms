@@ -9,12 +9,12 @@ mode = sys.argv[3]
 output = pathlib.Path(sys.argv[4])
 bridge = str(repo / "switchboard-bridge")
 bridge_tail = ["--swbctl", swbctl, "--timeout-ms", "10000"]
-snapshot_tail = ["snapshot", "--json"]
-markers = {"BRIDGE_RETAINED", "SNAPSHOT_RETAINED"}
+fleet_tail = ["fleet", "--json"]
+markers = {"BRIDGE_RETAINED", "FLEET_RETAINED"}
 if mode == "refresh":
     bridge_tail.append("--refresh")
-    snapshot_tail = ["snapshot", "--reconcile", "full", "--json"]
-    markers = {"BRIDGE_REFRESH", "SNAPSHOT_REFRESH"}
+    fleet_tail = ["fleet", "--refresh", "--json"]
+    markers = {"BRIDGE_REFRESH", "FLEET_REFRESH"}
 
 seen = set()
 deadline = time.monotonic() + 10
@@ -28,9 +28,9 @@ while time.monotonic() < deadline and seen != markers:
         for index, argument in enumerate(argv):
             if argument == bridge and argv[index + 1 :] == bridge_tail:
                 seen.add("BRIDGE_REFRESH" if mode == "refresh" else "BRIDGE_RETAINED")
-            if argument == swbctl and argv[index + 1 :] == snapshot_tail:
+            if argument == swbctl and argv[index + 1 :] == fleet_tail:
                 seen.add(
-                    "SNAPSHOT_REFRESH" if mode == "refresh" else "SNAPSHOT_RETAINED"
+                    "FLEET_REFRESH" if mode == "refresh" else "FLEET_RETAINED"
                 )
     time.sleep(0.05)
 

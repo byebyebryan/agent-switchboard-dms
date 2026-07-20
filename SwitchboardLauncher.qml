@@ -1,16 +1,16 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "SwitchboardModelV3.js" as SwitchboardModelV3
+import "SwitchboardModelV4.js" as SwitchboardModelV4
 import qs.Common
 
 Item {
     id: root
 
     readonly property string pluginName: "switchboard"
-    readonly property string modelStateKey: "last_good_model_v3_bridge2"
-    readonly property int bridgeContractVersion: 2
-    readonly property int modelContractVersion: 3
+    readonly property string modelStateKey: "last_good_model_v4_bridge3"
+    readonly property int bridgeContractVersion: 3
+    readonly property int modelContractVersion: 4
     readonly property string bridgeExecutable: Paths.strip(Qt.resolvedUrl("switchboard-bridge"))
     readonly property string openerExecutable: Paths.strip(Qt.resolvedUrl("switchboard-open"))
     property var pluginService: null
@@ -66,131 +66,8 @@ Item {
         return typeof value === "string" && value.length > 0;
     }
 
-    function modelOptionalString(value) {
-        return value === null || value === undefined || typeof value === "string";
-    }
-
-    function modelTimestamp(value) {
-        return typeof value === "number" && isFinite(value) && value >= 0;
-    }
-
-    function modelOneOf(value, allowed) {
-        return allowed.indexOf(value) !== -1;
-    }
-
-    function validateCapability(value, provider) {
-        return modelObject(value) && value.provider === provider && modelOneOf(value.status, ["available", "degraded", "neutral"]) && (value.available === null || typeof value.available === "boolean") && Array.isArray(value.features) && Array.isArray(value.degradedReasons);
-    }
-
-    function validateProject(value) {
-        return modelObject(value) && modelString(value.projectId) && modelString(value.name) && modelOptionalString(value.repositoryName) && modelOneOf(value.defaultProvider, ["codex", "claude"]) && modelOptionalString(value.defaultCheckoutId);
-    }
-
-    function validateTask(value) {
-        if (!modelObject(value) || !modelString(value.taskId) || !modelString(value.projectId))
-            return false;
-        if (!modelString(value.projectName) || !modelString(value.title))
-            return false;
-        if (!modelOptionalString(value.checkoutId) || !modelOptionalString(value.checkoutName))
-            return false;
-        if (!modelOptionalString(value.checkoutKind) || !modelOptionalString(value.checkoutBranch))
-            return false;
-        if (value.checkoutKind !== null && !modelOneOf(value.checkoutKind, ["main", "worktree", "directory"]))
-            return false;
-        if (typeof value.checkoutIsDefault !== "boolean" || typeof value.pinned !== "boolean")
-            return false;
-        if (!modelOptionalString(value.purpose) || !modelOptionalString(value.preferredProvider))
-            return false;
-        if (value.preferredProvider !== null && !modelOneOf(value.preferredProvider, ["codex", "claude"]))
-            return false;
-        if (!modelOneOf(value.status, ["open", "closed"]) || !modelOptionalString(value.currentSessionKey))
-            return false;
-        if (!modelTimestamp(value.createdAt) || !modelTimestamp(value.updatedAt))
-            return false;
-        if (value.closedAt !== null && !modelTimestamp(value.closedAt))
-            return false;
-        if (!modelOptionalString(value.provider) || !modelOneOf(value.runtimePresence, ["live", "stopped", "unknown"]))
-            return false;
-        if (value.provider !== null && !modelOneOf(value.provider, ["codex", "claude"]))
-            return false;
-        if (!modelOneOf(value.resumability, ["resumable", "missing", "unknown"]))
-            return false;
-        if (!modelOneOf(value.activity, ["working", "needs_input", "ready", "completed", "unknown"]))
-            return false;
-        if (!modelOneOf(value.activityReason, ["permission", "question", "elicitation", "turn_complete", "provider_complete", "error", "unknown"]))
-            return false;
-        if (!modelOneOf(value.attachment, ["attached", "detached", "none", "unknown"]))
-            return false;
-        if (!modelOneOf(value.stateConfidence, ["confirmed", "inferred", "unknown"]))
-            return false;
-        return modelTimestamp(value.recencyAt) && typeof value.canStop === "boolean";
-    }
-
-    function validateInboxSession(value) {
-        if (!modelObject(value) || !modelString(value.sessionKey) || !modelString(value.providerSessionId))
-            return false;
-        if (!modelOneOf(value.provider, ["codex", "claude"]))
-            return false;
-        if (!modelOptionalString(value.projectId) || !modelOptionalString(value.projectName))
-            return false;
-        if (!modelOptionalString(value.checkoutId) || !modelOptionalString(value.checkoutName) || !modelOptionalString(value.name))
-            return false;
-        if (!modelOneOf(value.runtimePresence, ["live", "stopped", "unknown"]))
-            return false;
-        if (!modelOneOf(value.resumability, ["resumable", "missing", "unknown"]))
-            return false;
-        if (!modelOneOf(value.activity, ["working", "needs_input", "ready", "completed", "unknown"]))
-            return false;
-        if (!modelOneOf(value.activityReason, ["permission", "question", "elicitation", "turn_complete", "provider_complete", "error", "unknown"]))
-            return false;
-        if (!modelOneOf(value.attachment, ["attached", "detached", "none", "unknown"]))
-            return false;
-        if (!modelOneOf(value.stateConfidence, ["confirmed", "inferred", "unknown"]))
-            return false;
-        return modelTimestamp(value.recencyAt) && typeof value.canStop === "boolean";
-    }
-
     function validateFrontendModel(model) {
-        if (!modelObject(model) || model.modelVersion !== modelContractVersion)
-            return false;
-        if (model.sourceSchemaVersion !== 2 || model.sourceProtocolVersion !== 2)
-            return false;
-        if (!modelTimestamp(model.generatedAt) || !modelObject(model.host))
-            return false;
-        if (!modelString(model.host.hostId) || !modelString(model.host.displayName))
-            return false;
-        if (!Array.isArray(model.projects) || model.projects.length > 1000)
-            return false;
-        if (!Array.isArray(model.tasks) || model.tasks.length > 1000)
-            return false;
-        if (!Array.isArray(model.inboxSessions) || model.inboxSessions.length > 1000)
-            return false;
-        if (!Array.isArray(model.capabilities) || model.capabilities.length !== 2)
-            return false;
-        if (!Array.isArray(model.warnings) || model.warnings.length > 256 || !modelObject(model.truncation))
-            return false;
-        if (!validateCapability(model.capabilities[0], "codex") || !validateCapability(model.capabilities[1], "claude"))
-            return false;
-        const identities = {};
-        for (let projectIndex = 0; projectIndex < model.projects.length; projectIndex++) {
-            const project = model.projects[projectIndex];
-            if (!validateProject(project) || identities["project:" + project.projectId])
-                return false;
-            identities["project:" + project.projectId] = true;
-        }
-        for (let taskIndex = 0; taskIndex < model.tasks.length; taskIndex++) {
-            const task = model.tasks[taskIndex];
-            if (!validateTask(task) || identities["task:" + task.taskId] || !identities["project:" + task.projectId])
-                return false;
-            identities["task:" + task.taskId] = true;
-        }
-        for (let inboxIndex = 0; inboxIndex < model.inboxSessions.length; inboxIndex++) {
-            const session = model.inboxSessions[inboxIndex];
-            if (!validateInboxSession(session) || identities["session:" + session.sessionKey])
-                return false;
-            identities["session:" + session.sessionKey] = true;
-        }
-        return true;
+        return SwitchboardModelV4.validateModel(model);
     }
 
     function bridgeFailure(code, message, retryable) {
@@ -233,11 +110,12 @@ Item {
             "modelVersion": model.modelVersion,
             "sourceSchemaVersion": model.sourceSchemaVersion,
             "sourceProtocolVersion": model.sourceProtocolVersion,
-            "host": model.host,
+            "sourceFleetVersion": model.sourceFleetVersion,
+            "localHostId": model.localHostId,
+            "hosts": model.hosts,
             "projects": model.projects,
             "tasks": model.tasks,
             "inboxSessions": model.inboxSessions,
-            "capabilities": model.capabilities,
             "warnings": model.warnings,
             "truncation": model.truncation
         });
@@ -248,9 +126,9 @@ Item {
             return;
 
         const configuredExecutable = pluginService.loadPluginData(pluginName, "swbctl", "swbctl");
-        const nextExecutable = SwitchboardModelV3.boundedExecutable(configuredExecutable);
+        const nextExecutable = SwitchboardModelV4.boundedExecutable(configuredExecutable);
         const configuredTerminal = pluginService.loadPluginData(pluginName, "terminal", "ghostty");
-        const nextTerminal = SwitchboardModelV3.boundedExecutable(configuredTerminal, "ghostty");
+        const nextTerminal = SwitchboardModelV4.boundedExecutable(configuredTerminal, "ghostty");
         const nextTimeout = boundedInteger(pluginService.loadPluginData(pluginName, "timeout_ms", 10000), 100, 60000, 10000);
         const nextRefresh = boundedInteger(pluginService.loadPluginData(pluginName, "refresh_seconds", 15), 5, 300, 15);
         const changed = nextExecutable !== swbctlExecutable || nextTerminal !== terminalExecutable || nextTimeout !== timeoutMs || nextRefresh !== refreshSeconds;
@@ -294,8 +172,8 @@ Item {
         }
     }
 
-    function snapshotIsStale(now) {
-        return lastGoodModel !== null && SwitchboardModelV3.isStale(lastGoodModel, now, refreshSeconds);
+    function fleetIsStale(now) {
+        return lastGoodModel !== null && SwitchboardModelV4.isStale(lastGoodModel, now, refreshSeconds);
     }
 
     function scheduleForRead() {
@@ -304,24 +182,24 @@ Item {
             scheduleRun(false);
             return;
         }
-        if (snapshotIsStale(now))
+        if (fleetIsStale(now))
             scheduleRun(true);
     }
 
     function getItems(query) {
         Qt.callLater(root.scheduleForRead);
         const now = Date.now();
-        return SwitchboardModelV3.launcherItems(lastGoodModel, query, {
+        return SwitchboardModelV4.launcherItems(lastGoodModel, query, {
             "now": now,
             "loading": runActive || startScheduled,
-            "stale": snapshotIsStale(now),
+            "stale": fleetIsStale(now),
             "failure": currentFailure,
             "category": activeCategory
         });
     }
 
     function getCategories() {
-        return SwitchboardModelV3.launcherCategories(lastGoodModel);
+        return SwitchboardModelV4.launcherCategories(lastGoodModel);
     }
 
     function setCategory(categoryId) {
@@ -329,7 +207,7 @@ Item {
     }
 
     function executeItem(item) {
-        if (actionActive || !item || !item._windowHost)
+        if (actionActive || !item || !item._windowHost || !item._hostId)
             return;
 
         let targetArguments;
@@ -345,7 +223,7 @@ Item {
     }
 
     function getContextMenuActions(item) {
-        if (!item || !item._windowHost)
+        if (!item || !item._windowHost || !item._hostId)
             return [];
 
         const result = [];
@@ -373,7 +251,7 @@ Item {
     }
 
     function startAction(item, targetArguments) {
-        if (actionActive || !item || !item._windowHost || !Array.isArray(targetArguments))
+        if (actionActive || !item || !item._windowHost || !item._hostId || !Array.isArray(targetArguments))
             return;
 
         actionActive = true;
@@ -383,7 +261,7 @@ Item {
         actionExitFinished = false;
         actionExitCode = -1;
         actionStdout = "";
-        actionProcess.command = [openerExecutable, "--swbctl", swbctlExecutable, "--terminal", terminalExecutable, "--timeout-ms", String(timeoutMs), "--window-host", item._windowHost].concat(targetArguments);
+        actionProcess.command = [openerExecutable, "--swbctl", swbctlExecutable, "--terminal", terminalExecutable, "--timeout-ms", String(timeoutMs), "--window-host", item._windowHost, "--host", item._hostId].concat(targetArguments);
         actionDeadline.interval = timeoutMs * 4 + 5000;
         actionDeadline.restart();
         actionProcess.running = true;
@@ -414,7 +292,7 @@ Item {
 
         actionDeadline.stop();
         if (!actionExpired) {
-            const parsed = SwitchboardModelV3.parseActionResponse(actionStdout);
+            const parsed = SwitchboardModelV4.parseActionResponse(actionStdout);
             if (actionExitCode === 0 && parsed.ok) {
                 currentFailure = null;
                 scheduleRun(true);
@@ -429,7 +307,7 @@ Item {
     }
 
     function scheduleRun(refresh) {
-        const plan = SwitchboardModelV3.planRunRequest({
+        const plan = SwitchboardModelV4.planRunRequest({
             "active": runActive || refreshProcess.running,
             "runWasRefresh": runWasRefresh,
             "settingsGeneration": settingsGeneration,
@@ -504,7 +382,7 @@ Item {
     }
 
     function finishStoppedRunIfNeeded(generation, deadline) {
-        const disposition = SwitchboardModelV3.stoppedRunDisposition({
+        const disposition = SwitchboardModelV4.stoppedRunDisposition({
             "runActive": runActive,
             "running": refreshProcess.running,
             "observedRunGeneration": generation,
@@ -552,7 +430,7 @@ Item {
                     saveCachedModel(parsed.model, runWasRefresh || cacheChanged);
                 currentFailure = null;
                 automaticRetryBudget = 1;
-                if (!runWasRefresh && snapshotIsStale(Date.now())) {
+                if (!runWasRefresh && fleetIsStale(Date.now())) {
                     queuedRun = true;
                     queuedRefresh = true;
                 }

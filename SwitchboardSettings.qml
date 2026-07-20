@@ -1,5 +1,5 @@
 import QtQuick
-import "SwitchboardModelV3.js" as SwitchboardModelV3
+import "SwitchboardModelV4.js" as SwitchboardModelV4
 import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets
@@ -48,7 +48,7 @@ PluginSettings {
                 return;
 
             const loadedValue = String(settings.loadValue("terminal", "ghostty") || "ghostty");
-            const boundedValue = SwitchboardModelV3.boundedExecutable(loadedValue, "ghostty");
+            const boundedValue = SwitchboardModelV4.boundedExecutable(loadedValue, "ghostty");
             if (terminalField.activeFocus && isInitialized)
                 return;
 
@@ -63,7 +63,7 @@ PluginSettings {
             if (!isInitialized)
                 return;
 
-            const boundedValue = SwitchboardModelV3.boundedExecutable(terminalField.text, "ghostty");
+            const boundedValue = SwitchboardModelV4.boundedExecutable(terminalField.text, "ghostty");
             if (terminalField.text !== boundedValue)
                 terminalField.text = boundedValue;
 
@@ -100,7 +100,7 @@ PluginSettings {
 
             width: parent.width
             placeholderText: "ghostty"
-            maximumLength: SwitchboardModelV3.MAX_EXECUTABLE_LENGTH
+            maximumLength: SwitchboardModelV4.MAX_EXECUTABLE_LENGTH
             onEditingFinished: terminalSetting.commit()
             onActiveFocusChanged: {
                 if (!activeFocus)
@@ -132,7 +132,7 @@ PluginSettings {
                 return;
 
             const loadedValue = String(settings.loadValue("swbctl", "swbctl") || "swbctl");
-            const boundedValue = SwitchboardModelV3.boundedExecutable(loadedValue);
+            const boundedValue = SwitchboardModelV4.boundedExecutable(loadedValue);
             if (executableField.activeFocus && isInitialized)
                 return;
 
@@ -147,7 +147,7 @@ PluginSettings {
             if (!isInitialized)
                 return;
 
-            const boundedValue = SwitchboardModelV3.boundedExecutable(executableField.text);
+            const boundedValue = SwitchboardModelV4.boundedExecutable(executableField.text);
             if (executableField.text !== boundedValue)
                 executableField.text = boundedValue;
 
@@ -184,7 +184,7 @@ PluginSettings {
 
             width: parent.width
             placeholderText: "swbctl"
-            maximumLength: SwitchboardModelV3.MAX_EXECUTABLE_LENGTH
+            maximumLength: SwitchboardModelV4.MAX_EXECUTABLE_LENGTH
             onEditingFinished: executableSetting.commit()
             onActiveFocusChanged: {
                 if (!activeFocus)
@@ -195,8 +195,8 @@ PluginSettings {
 
     SliderSetting {
         settingKey: "timeout_ms"
-        label: "Snapshot timeout"
-        description: "Maximum time allowed for swbctl to produce one validated snapshot."
+        label: "Fleet timeout"
+        description: "Maximum time allowed for swbctl to produce one validated fleet."
         defaultValue: 10000
         minimum: 100
         maximum: 60000
@@ -206,7 +206,7 @@ PluginSettings {
     SliderSetting {
         settingKey: "refresh_seconds"
         label: "Refresh interval"
-        description: "Age at which a cached snapshot requests a full background refresh."
+        description: "Age at which a cached fleet requests a background host refresh."
         defaultValue: 15
         minimum: 5
         maximum: 300

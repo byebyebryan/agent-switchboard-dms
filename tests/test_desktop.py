@@ -33,12 +33,14 @@ PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 CHECKOUT_ID = "44444444-4444-4444-8444-444444444444"
 TASK_ID = "88888888-8888-4888-8888-888888888888"
 TOKEN = f"surface:{SURFACE_ID}"
+HOST_ID = "11111111-1111-4111-8111-111111111111"
+REMOTE_HOST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 
 def plan(kind: str, **overrides: object) -> dict[str, object]:
     value: dict[str, object] = {
         "kind": kind,
-        "hostId": "11111111-1111-4111-8111-111111111111",
+        "hostId": HOST_ID,
         "surfaceId": SURFACE_ID,
         "workspaceId": "as-codex-surface",
         "desktopToken": TOKEN,
@@ -49,16 +51,19 @@ def plan(kind: str, **overrides: object) -> dict[str, object]:
 
 class DesktopIdentityTests(unittest.TestCase):
     def test_application_id_is_valid_deterministic_and_opaque(self) -> None:
-        expected = APP_ID_PREFIX + hashlib.sha256(TOKEN.encode()).hexdigest()[:32]
+        expected = (
+            APP_ID_PREFIX
+            + hashlib.sha256(f"{HOST_ID}\0{TOKEN}".encode()).hexdigest()[:32]
+        )
 
-        self.assertEqual(desktop_app_id(TOKEN), expected)
+        self.assertEqual(desktop_app_id(TOKEN, HOST_ID), expected)
         self.assertRegex(expected, r"^[a-z][a-z0-9_.]+$")
         self.assertNotIn(SURFACE_ID, expected)
         with self.assertRaises(ValueError):
-            desktop_app_id("bad\nvalue")
+            desktop_app_id("bad\nvalue", HOST_ID)
 
     def test_niri_match_prefers_exact_app_id_then_bounded_title_fallback(self) -> None:
-        app_id = desktop_app_id(TOKEN)
+        app_id = desktop_app_id(TOKEN, HOST_ID)
         windows = [
             {"id": 1, "app_id": "com.example.other", "title": "other"},
             {
@@ -111,7 +116,7 @@ class DesktopIdentityTests(unittest.TestCase):
                 payload = [
                     {
                         "id": 42,
-                        "app_id": desktop_app_id(TOKEN),
+                        "app_id": desktop_app_id(TOKEN, HOST_ID),
                         "title": "managed",
                     }
                 ]
@@ -120,6 +125,7 @@ class DesktopIdentityTests(unittest.TestCase):
 
         focused = focus_existing_window(
             plan("focus"),
+            host_id=HOST_ID,
             window_host="snap",
             timeout_ms=500,
             runner=runner,
@@ -160,6 +166,7 @@ class DesktopActionTests(unittest.TestCase):
             swbctl="/opt/swb ctl",
             surface_id=SURFACE_ID,
             desktop_token=TOKEN,
+            host_id=HOST_ID,
         )
 
         self.assertEqual(
@@ -172,11 +179,13 @@ class DesktopActionTests(unittest.TestCase):
                 "--quiet",
                 "--",
                 "/usr/bin/ghostty",
-                f"--class={desktop_app_id(TOKEN)}",
+                f"--class={desktop_app_id(TOKEN, HOST_ID)}",
                 "-e",
                 "/opt/swb ctl",
                 "attach-surface",
                 SURFACE_ID,
+                "--host",
+                HOST_ID,
             ],
         )
         self.assertNotIn("tmux", argv)
@@ -190,6 +199,7 @@ class DesktopActionTests(unittest.TestCase):
         result = open_session(
             swbctl="swbctl",
             terminal="ghostty",
+            host_id=HOST_ID,
             session_key=SESSION_KEY,
             window_host="snap",
             timeout_ms=1000,
@@ -202,6 +212,7 @@ class DesktopActionTests(unittest.TestCase):
         self.assertEqual(launched, [])
         prepared.assert_called_once_with(
             swbctl="swbctl",
+            host_id=HOST_ID,
             session_key=SESSION_KEY,
             task_id=None,
             create_task=False,
@@ -230,6 +241,7 @@ class DesktopActionTests(unittest.TestCase):
         result = open_session(
             swbctl="/opt/swb ctl",
             terminal="ghostty",
+            host_id=HOST_ID,
             session_key=SESSION_KEY,
             window_host="snap",
             timeout_ms=1000,
@@ -244,6 +256,7 @@ class DesktopActionTests(unittest.TestCase):
             [
                 call(
                     swbctl="/opt/swb ctl",
+                    host_id=HOST_ID,
                     session_key=SESSION_KEY,
                     task_id=None,
                     create_task=False,
@@ -258,6 +271,7 @@ class DesktopActionTests(unittest.TestCase):
                 ),
                 call(
                     swbctl="/opt/swb ctl",
+                    host_id=HOST_ID,
                     session_key=SESSION_KEY,
                     task_id=None,
                     create_task=False,
@@ -272,7 +286,9 @@ class DesktopActionTests(unittest.TestCase):
                 ),
             ],
         )
-        self.assertEqual(launched[0][-2:], ["attach-surface", SURFACE_ID])
+        self.assertEqual(
+            launched[0][-4:], ["attach-surface", SURFACE_ID, "--host", HOST_ID]
+        )
 
     @patch("switchboard_dms.desktop._prepared_plan")
     def test_new_task_uses_only_stable_ids_and_shared_attach_path(
@@ -284,6 +300,7 @@ class DesktopActionTests(unittest.TestCase):
         result = open_task(
             swbctl="swbctl",
             terminal="ghostty",
+            host_id=HOST_ID,
             task_id=TASK_ID,
             create=True,
             project_id=PROJECT_ID,
@@ -300,6 +317,7 @@ class DesktopActionTests(unittest.TestCase):
         self.assertEqual(result, {"kind": "launched", "surfaceId": SURFACE_ID})
         prepared.assert_called_once_with(
             swbctl="swbctl",
+            host_id=HOST_ID,
             session_key=None,
             task_id=TASK_ID,
             create_task=True,
@@ -312,7 +330,9 @@ class DesktopActionTests(unittest.TestCase):
             timeout_ms=1000,
             can_focus_desktop=True,
         )
-        self.assertEqual(launched[0][-2:], ["attach-surface", SURFACE_ID])
+        self.assertEqual(
+            launched[0][-4:], ["attach-surface", SURFACE_ID, "--host", HOST_ID]
+        )
 
     @patch("switchboard_dms.desktop._prepared_plan")
     def test_history_uses_project_ids_and_shared_attach_path(self, prepared) -> None:
@@ -322,6 +342,7 @@ class DesktopActionTests(unittest.TestCase):
         result = open_history(
             swbctl="swbctl",
             terminal="ghostty",
+            host_id=HOST_ID,
             project_id=PROJECT_ID,
             checkout_id=CHECKOUT_ID,
             window_host="snap",
@@ -334,6 +355,7 @@ class DesktopActionTests(unittest.TestCase):
         self.assertEqual(result, {"kind": "launched", "surfaceId": SURFACE_ID})
         prepared.assert_called_once_with(
             swbctl="swbctl",
+            host_id=HOST_ID,
             session_key=None,
             task_id=None,
             create_task=False,
@@ -350,7 +372,7 @@ class DesktopActionTests(unittest.TestCase):
     @patch("switchboard_dms.desktop.run_bridge")
     def test_stop_returns_only_validated_core_action(self, bridge) -> None:
         bridge.return_value = {
-            "bridgeVersion": 2,
+            "bridgeVersion": 3,
             "ok": True,
             "action": {
                 "kind": "stop",
@@ -361,6 +383,7 @@ class DesktopActionTests(unittest.TestCase):
 
         result = stop_session(
             swbctl="swbctl",
+            host_id=HOST_ID,
             session_key=SESSION_KEY.replace(":codex:", ":claude:"),
             timeout_ms=1000,
         )
@@ -372,6 +395,7 @@ class DesktopActionTests(unittest.TestCase):
             timeout_ms=1000,
             max_sessions=1000,
             stop_session=SESSION_KEY.replace(":codex:", ":claude:"),
+            action_host_id=HOST_ID,
         )
 
     @patch("switchboard_dms.desktop.focus_existing_window", return_value=True)
@@ -381,11 +405,12 @@ class DesktopActionTests(unittest.TestCase):
         self, prepared, bridge, focused
     ) -> None:
         prepared.return_value = plan("switch", tmuxClient="/dev/pts/7")
-        bridge.return_value = {"bridgeVersion": 2, "ok": True, "action": {}}
+        bridge.return_value = {"bridgeVersion": 3, "ok": True, "action": {}}
 
         result = open_session(
             swbctl="swbctl",
             terminal="ghostty",
+            host_id=HOST_ID,
             session_key=SESSION_KEY,
             window_host="snap",
             timeout_ms=1000,
@@ -401,13 +426,14 @@ class DesktopActionTests(unittest.TestCase):
             max_sessions=1000,
             select_surface=SURFACE_ID,
             tmux_client="/dev/pts/7",
+            action_host_id=HOST_ID,
         )
         focused.assert_called_once()
 
     @patch("switchboard_dms.desktop.run_bridge")
     def test_blocked_plan_is_a_small_failure(self, bridge) -> None:
         bridge.return_value = {
-            "bridgeVersion": 2,
+            "bridgeVersion": 3,
             "ok": True,
             "plan": {
                 "kind": "blocked",
@@ -424,6 +450,7 @@ class DesktopActionTests(unittest.TestCase):
             open_session(
                 swbctl="swbctl",
                 terminal="ghostty",
+                host_id=HOST_ID,
                 session_key=SESSION_KEY,
                 window_host="snap",
                 timeout_ms=1000,
@@ -432,10 +459,31 @@ class DesktopActionTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "unmanaged_surface")
 
+    @patch("switchboard_dms.desktop.run_bridge")
+    def test_plan_for_another_host_is_rejected(self, bridge) -> None:
+        bridge.return_value = {
+            "bridgeVersion": 3,
+            "ok": True,
+            "plan": plan("focus", hostId=REMOTE_HOST_ID),
+        }
+
+        with self.assertRaisesRegex(DesktopActionError, "another host") as raised:
+            open_session(
+                swbctl="swbctl",
+                terminal="ghostty",
+                host_id=HOST_ID,
+                session_key=SESSION_KEY,
+                window_host="snap",
+                timeout_ms=1000,
+                request_id=REQUEST_ID,
+                which=self.which,
+            )
+        self.assertEqual(raised.exception.code, "desktop_plan_host_mismatch")
+
     def test_response_framing_is_one_bounded_json_record(self) -> None:
         exit_code, payload = serialize_response(
             {
-                "actionVersion": 2,
+                "actionVersion": 3,
                 "ok": True,
                 "action": {"kind": "focused", "surfaceId": SURFACE_ID},
             }
@@ -449,7 +497,14 @@ class DesktopActionTests(unittest.TestCase):
     ) -> None:
         self.assertEqual(stat.S_IMODE(OPENER.stat().st_mode), 0o755)
         result = subprocess.run(
-            [str(OPENER), "--window-host", "snap\nlan", SESSION_KEY],
+            [
+                str(OPENER),
+                "--host",
+                HOST_ID,
+                "--window-host",
+                "snap\nlan",
+                SESSION_KEY,
+            ],
             cwd=ROOT,
             capture_output=True,
             check=False,
@@ -461,7 +516,7 @@ class DesktopActionTests(unittest.TestCase):
         self.assertNotEqual(result.stderr, b"")
 
         result = subprocess.run(
-            [str(OPENER), "--stop", SESSION_KEY],
+            [str(OPENER), "--host", HOST_ID, "--stop", SESSION_KEY],
             cwd=ROOT,
             capture_output=True,
             check=False,

@@ -2,103 +2,118 @@
 
 ## Ownership boundary
 
-The plugin is a strict frontend for a user-configured `swbctl`. It must not
-import internal Agent Switchboard modules, read its database, invoke Git, parse
-provider transcripts, or gain provider/tmux ownership. The public boundary is:
+The plugin is a strict frontend for one user-configured local `swbctl`. Core
+owns registries, provider discovery, Git/worktree discovery, tmux, and every
+SSH command. The DMS adapter must not import internal Agent Switchboard
+modules, read its database or remote configuration, invoke Git or SSH, parse
+provider transcripts, or construct provider/tmux commands.
+
+The current public command boundary is:
 
 ```text
-swbctl snapshot --json
-swbctl snapshot --reconcile full --json
-swbctl prepare-open <session-key> --request-id <uuid> --json
-swbctl prepare-task <task-id> --request-id <uuid> --json
-swbctl prepare-task <task-id> --create --project <project-id> --title <text> --checkout <checkout-id> --provider <provider> --request-id <uuid> --json
-swbctl prepare-history --project <project-id> --checkout <checkout-id> --request-id <uuid> --json
-swbctl stop-session <session-key> --json
-swbctl select-surface <surface-id> --client <tmux-client-id>
-swbctl attach-surface <surface-id>
+swbctl fleet --json
+swbctl fleet --refresh --json
+swbctl prepare-open <session-key> --host <host-id> --request-id <uuid> --json
+swbctl prepare-task <task-id> --host <host-id> --request-id <uuid> --json
+swbctl prepare-task <task-id> --host <host-id> --create --project <project-id> --title <text> --checkout <checkout-id> --provider <provider> --request-id <uuid> --json
+swbctl prepare-history --project <project-id> --host <host-id> --checkout <checkout-id> --request-id <uuid> --json
+swbctl stop-session <session-key> --host <host-id> --json
+swbctl select-surface <surface-id> --host <host-id> --client <tmux-client-id>
+swbctl attach-surface <surface-id> --host <host-id>
 ```
 
-Snapshot v2 JSON, PresentationPlan v2 JSON, and SessionAction v2 JSON are the
-only structured core inputs. The bridge rejects v1 rather than translating
-locations into repositories, checkouts, or tasks.
+Fleet v1 contains individually validated Snapshot v2 documents. It is not a
+multi-host Snapshot and does not weaken each owning host's authority.
+PresentationPlan v2 and SessionAction v2 remain the structured action inputs.
 
 ## Process split
 
-`SwitchboardLauncher.qml` owns the DMS launcher interface and two persistent
-Quickshell `Process` objects. `switchboard-bridge` performs bounded source
-validation and emits frontend model v3. `switchboard-open` asks the bridge for
-one validated plan and performs only local niri/Ghostty presentation. Core
-still owns tmux locators and attachment.
+`SwitchboardLauncher.qml` owns the synchronous DMS launcher surface and two
+persistent asynchronous Quickshell `Process` objects. `switchboard-bridge`
+validates Fleet v1 and emits frontend model v4. `switchboard-open` asks the
+bridge for a host-qualified plan, performs local niri focus or Ghostty launch,
+and delegates select/attach back to local core. Core decides whether those
+commands execute locally or through bounded SSH.
 
-Both helpers use fixed argv with no shell. The Python process runner drains
-stdout and stderr concurrently, imposes byte/time limits, launches a new
-process group, and kills/reaps descendants on timeout, overflow, selector
-failure, read failure, or unexpected exceptions.
+Both helpers use fixed argv and no shell. The Python runner drains stdout and
+stderr concurrently, bounds bytes and time, starts a separate process group,
+and kills and reaps descendants after timeout, overflow, read/selector
+failure, or an unexpected exception.
 
-## Model v3
+## Model v4
 
-The frontend model contains only bounded display/routing data:
+The privacy-bounded frontend model contains:
 
-- declared projects and their primary/default checkout route;
-- open and closed task rows with stable task/project/checkout IDs;
-- unassigned Inbox sessions;
-- source-authored provider/runtime/activity truth;
-- provider capabilities, bounded warnings, and truncation counts.
+- local and configured remote host display, reachability, staleness, and
+  bounded failure state, but never SSH targets;
+- projects merged by stable ProjectId, with one host-local route per available
+  snapshot;
+- host-qualified open and closed tasks, identified by `(HostId, TaskId)`;
+- host-qualified unassigned Inbox sessions;
+- source-authored provider/runtime/activity truth; and
+- bounded warnings and honest truncation counts.
 
-Task rows contain stable IDs and use the task title as the primary line. The
-second line is project, optional nondefault worktree branch/name, state, and
-age. Absolute checkout paths and Git administrative identity never cross into
-the model. Codex uses `material:terminal`, Claude uses
-`material:auto_awesome`, and a task without a current session uses
-`material:task_alt`.
+Project routes include only host-local default checkouts that core projected as
+present. A task or Inbox row carries its owning HostId privately for actions.
+The visible format stays compact:
 
-The native plugin category contract exposes All tasks, one category per
-project, Inbox, and Closed. All tasks includes open tasks plus one
-non-actionable Inbox summary. The Inbox category shows exact provider sessions.
-Closed shows closed tasks.
+```text
+task title
+project | optional remote host | optional worktree | state | age
+```
 
-Inside one project category, an empty query produces no creation action. A
-nonempty query produces bounded Codex and Claude creation rows. Selection
-generates a task UUID and request UUID in `switchboard-open`, then invokes
-atomic `prepare-task --create` in the project's default checkout.
+Local and remote rows with the same TaskId remain distinct. Compatible
+ProjectIds share one native DMS category. Inbox and Closed span all retained
+hosts. Within a project category, a nonempty query emits Codex and Claude
+creation rows for each eligible host; the host is named when more than one
+route qualifies.
 
-Safe Claude stop and Claude native history are DMS context actions. They are
-not duplicate launcher rows. Stop appears only when the source model projects
-`canStop=true`; core revalidates ownership before acting.
+Codex uses `material:terminal`, Claude uses `material:auto_awesome`, and a task
+without a current session uses `material:task_alt`. Absolute checkout paths,
+SSH targets, transcripts, prompts, provider argv, tmux locators, and private
+Git administrative identity never cross the model boundary.
+
+## Host-qualified actions
+
+Every actionable row supplies its owning HostId to `switchboard-open`, and the
+helper supplies it to every local `swbctl` action. A returned plan for another
+host fails closed. Desktop application identity hashes both HostId and the
+opaque surface token, so equal-looking remote and local surfaces cannot focus
+one another.
+
+A focus miss reuses the same request ID and asks core for an attach fallback.
+New tasks also retain the same generated TaskId. This preserves core's atomic
+reservation and duplicate-prevention semantics across local and remote hosts.
+Offline retained rows remain inspectable; selecting one attempts an
+owner-revalidated action and reports a bounded failure rather than treating
+cache state as mutation authority.
+
+Claude history and safe launch-owned stop remain context actions, not duplicate
+search rows. Stop appears only for source-projected `canStop=true`, and core
+independently revalidates ownership before acting.
 
 ## Cache and refresh
 
 `getItems(query)` is synchronous and reads only the last-good model. It uses
-`Qt.callLater` to schedule a retained read or one coalesced refresh. A valid
-complete response atomically replaces the cache and stores that same bounded
-frontend model under a bridge/model-versioned DMS plugin-state key. A new QML
-instance synchronously loads and fully revalidates that cache before starting
-its asynchronous retained read. Invalid or absent plugin state is ignored;
-absolute paths, transcripts, prompts, and private provider payloads never enter
-it. A single delayed follow-up write makes first-file creation and later full
-refresh persistence reliable on the verified DMS 1.5 state API. A retained
-read after a warm plugin reload ignores source-generation time when comparing
-models, so it does not rewrite an otherwise unchanged cache; real task, Inbox,
-capability, warning, or host changes still persist.
-Failure retains the last-good snapshot and adds an explicit status row.
-One initial no-model parse failure gets one delayed automatic retry; the retry
-budget resets only after success or a settings change.
-Missing observations and stale data remain source truth. An absent provider
-record becomes neutral Codex or Claude capability rather than a failure.
+`Qt.callLater` to schedule `fleet --json` or one coalesced
+`fleet --refresh --json` run. A complete bridge success atomically replaces
+the model and stores it under `last_good_model_v4_bridge3`. A new launcher
+instance synchronously reloads and fully revalidates that bounded model before
+its asynchronous retained read.
 
-DMS 1.5.0 does not connect that signal to live launcher-result mutation. The
-persisted cache removes that limitation from normal shell starts and plugin
-reloads, but after a first install or cleared/invalid cache the new rows become
-visible when the launcher is reopened or the query changes.
-Timeout handling uses `Process.signal(15)` and the helper's process-group guard.
+Failures retain the last-good fleet and add an explicit status row. Missing
+observations, unavailable hosts, and stale snapshots remain explicit rather
+than becoming activity guesses. One initial no-model failure receives one
+delayed retry; the budget resets only after success or a settings change.
 
-The JavaScript projection module remains `SwitchboardModelV3.js` for
-contract-stable filtering and row construction. DMS cache-busts the launcher
-QML component on reload while Qt retains relative JavaScript imports for the
-shell lifetime. Reload-significant bridge-envelope and persisted-cache
-validation therefore lives in `SwitchboardLauncher.qml`, not the retained
-module. A same-contract bridge fix takes effect on plugin reload; only a true
-model-contract bump requires a new physical `V` module and a fresh shell.
+DMS 1.5 does not connect launcher `itemsChanged()` to live result-list
+mutation. Persisted state makes normal shell starts and plugin reloads useful
+immediately. On first install or after cache removal, completed rows appear
+when the launcher is reopened or its query changes.
+
+`SwitchboardModelV4.js` is a new physical module because Qt may retain relative
+JavaScript imports across a plugin reload. Reload-significant envelope and
+cache validation also remains in the cache-busted launcher QML component.
 
 The `switchboard-launcher` IPC target exposes only versions, idle/generation
 state, aggregate task/Inbox counts, and a stable failure code. It never emits
@@ -106,14 +121,14 @@ the model, item text, paths, host IDs, or provider/session IDs.
 
 ## Non-goals
 
-This adapter does not add SSH, provider hooks or liveness inference,
-arbitrary working-directory launch, project-catalog editing, a direct tmux
-locator, non-niri/non-Ghostty adapters, a chezmoi cutover, or a rich widget.
-Repositories/worktrees are discovered by core; the plugin never mutates them.
+This adapter does not configure remote hosts, run SSH, edit projects,
+repositories, or worktrees, infer provider liveness, accept arbitrary working
+directories, expose tmux locators, add non-niri/non-Ghostty presentation, own a
+chezmoi cutover, or become a rich widget.
 
-## Historical phases
+## Historical contracts
 
-Phases 1 through 3C used Snapshot v1, project locations, session rows, and
-separate launch/history/stop rows. Those contracts are preserved in Git
-history and the implementation-plan chronology, but Phase 4D supersedes them
-for the current core `0.2.0` and DMS adapter `0.2.1` runtime.
+Phases 1 through 3C used Snapshot v1 and location/session rows. Phase 4D used
+Snapshot v2, frontend model v3, bridge v2, and adapter `0.2.1`. Phase 5 keeps
+Snapshot v2 single-host and advances the DMS boundary to Fleet v1, frontend
+model v4, bridge/action v3, and adapter `0.3.0`.

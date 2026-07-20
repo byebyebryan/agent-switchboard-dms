@@ -21,7 +21,7 @@ class ManifestContractTests(unittest.TestCase):
             "id": "switchboard",
             "name": "Switchboard",
             "description": "Agent Switchboard launcher integration for DMS.",
-            "version": "0.2.1",
+            "version": "0.3.0",
             "author": "Bryan Bai",
             "type": "launcher",
             "component": "./SwitchboardLauncher.qml",
@@ -44,7 +44,7 @@ class ManifestContractTests(unittest.TestCase):
         for key in ("component", "settings"):
             with self.subTest(key=key):
                 self.assertTrue((ROOT / self.manifest[key]).is_file())
-        self.assertTrue((ROOT / "SwitchboardModelV3.js").is_file())
+        self.assertTrue((ROOT / "SwitchboardModelV4.js").is_file())
         self.assertTrue((ROOT / "switchboard-open").is_file())
 
 
@@ -53,7 +53,7 @@ class QmlScaffoldTests(unittest.TestCase):
     def setUpClass(cls):
         cls.launcher = (ROOT / "SwitchboardLauncher.qml").read_text(encoding="utf-8")
         cls.settings = (ROOT / "SwitchboardSettings.qml").read_text(encoding="utf-8")
-        cls.model = (ROOT / "SwitchboardModelV3.js").read_text(encoding="utf-8")
+        cls.model = (ROOT / "SwitchboardModelV4.js").read_text(encoding="utf-8")
 
     def test_launcher_surface_reads_cache_synchronously(self):
         self.assertRegex(self.launcher, r"property\s+var\s+pluginService\s*:\s*null")
@@ -62,7 +62,7 @@ class QmlScaffoldTests(unittest.TestCase):
         read_path = self.launcher.split("function getItems(query)", 1)[1].split(
             "function executeItem", 1
         )[0]
-        self.assertIn("SwitchboardModelV3.launcherItems", read_path)
+        self.assertIn("SwitchboardModelV4.launcherItems", read_path)
         self.assertIn("Qt.callLater(root.scheduleForRead)", read_path)
         self.assertNotIn("refreshProcess.running = true", read_path)
         self.assertNotIn("swbctlExecutable", read_path)
@@ -83,7 +83,7 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
 
     def test_model_module_is_contract_versioned_and_instance_scoped(self):
-        expected_import = 'import "SwitchboardModelV3.js" as SwitchboardModelV3'
+        expected_import = 'import "SwitchboardModelV4.js" as SwitchboardModelV4'
         self.assertIn(expected_import, self.launcher)
         self.assertIn(expected_import, self.settings)
         self.assertNotIn(".pragma library", self.model)
@@ -93,7 +93,7 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn('pluginId: "switchboard"', self.settings)
         self.assertEqual(self.settings.count("DankTextField {"), 2)
         self.assertIn(
-            "maximumLength: SwitchboardModelV3.MAX_EXECUTABLE_LENGTH", self.settings
+            "maximumLength: SwitchboardModelV4.MAX_EXECUTABLE_LENGTH", self.settings
         )
         self.assertEqual(self.settings.count("SliderSetting {"), 2)
         self.assertIn('loadValue("swbctl", "swbctl")', self.settings)
@@ -109,17 +109,19 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("StdioCollector {", self.launcher)
         self.assertIn("refreshProcess.command = command", self.launcher)
         self.assertIn("actionProcess.command", self.launcher)
-        self.assertIn("SwitchboardModelV3.parseActionResponse", self.launcher)
+        self.assertIn("SwitchboardModelV4.parseActionResponse", self.launcher)
         self.assertIn("parseCurrentBridgeResponse(runStdout)", self.launcher)
-        self.assertNotIn("SwitchboardModelV3.parseBridgeResponse(runStdout)", self.launcher)
+        self.assertNotIn(
+            "SwitchboardModelV4.parseBridgeResponse(runStdout)", self.launcher
+        )
         self.assertIn('"--swbctl"', self.launcher)
         self.assertIn('"--timeout-ms"', self.launcher)
         self.assertIn('command.push("--refresh")', self.launcher)
         self.assertIn("refreshProcess.signal(15)", self.launcher)
         self.assertIn("lastGoodModel = parsed.model", self.launcher)
         self.assertIn("currentFailure = null", self.launcher)
-        self.assertIn("SwitchboardModelV3.planRunRequest", self.launcher)
-        self.assertIn("SwitchboardModelV3.stoppedRunDisposition", self.launcher)
+        self.assertIn("SwitchboardModelV4.planRunRequest", self.launcher)
+        self.assertIn("SwitchboardModelV4.stoppedRunDisposition", self.launcher)
         self.assertIn("onRunningChanged", self.launcher)
         self.assertIn(
             "root.finishStoppedRunIfNeeded(root.runGeneration, true)", self.launcher
@@ -158,14 +160,19 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertIn("setFailure(parsed.error.code", failure_path)
 
     def test_validated_last_good_model_is_persisted_and_diagnostics_are_bounded(self):
-        self.assertIn('modelStateKey: "last_good_model_v3_bridge2"', self.launcher)
+        self.assertIn('modelStateKey: "last_good_model_v4_bridge3"', self.launcher)
         self.assertIn("pluginService.loadPluginState", self.launcher)
         self.assertIn("validateFrontendModel(cached)", self.launcher)
         self.assertIn("function parseCurrentBridgeResponse(text)", self.launcher)
         self.assertIn("pluginService.savePluginState", self.launcher)
         self.assertIn("function persistentModelFingerprint(model)", self.launcher)
-        self.assertIn("if (!cacheLoadedFromState || runWasRefresh || cacheChanged)", self.launcher)
-        self.assertIn("saveCachedModel(parsed.model, runWasRefresh || cacheChanged)", self.launcher)
+        self.assertIn(
+            "if (!cacheLoadedFromState || runWasRefresh || cacheChanged)", self.launcher
+        )
+        self.assertIn(
+            "saveCachedModel(parsed.model, runWasRefresh || cacheChanged)",
+            self.launcher,
+        )
         self.assertIn("id: cacheWriteFollowup", self.launcher)
         self.assertIn("interval: 350", self.launcher)
         self.assertIn('target: "switchboard-launcher"', self.launcher)
@@ -211,22 +218,23 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_public_command_boundary_is_documented(self):
         commands = (
-            "swbctl snapshot --json",
-            "swbctl snapshot --reconcile full --json",
-            "swbctl prepare-open <session-key> --request-id <uuid> --json",
-            "swbctl prepare-task <task-id> --request-id <uuid> --json",
-            "swbctl prepare-task <task-id> --create --project <project-id> --title <text> --checkout <checkout-id> --provider <provider> --request-id <uuid> --json",
-            "swbctl prepare-history --project <project-id> --checkout <checkout-id> --request-id <uuid> --json",
-            "swbctl stop-session <session-key> --json",
-            "swbctl select-surface <surface-id> --client <tmux-client-id>",
-            "swbctl attach-surface <surface-id>",
+            "swbctl fleet --json",
+            "swbctl fleet --refresh --json",
+            "swbctl prepare-open <session-key> --host <host-id> --request-id <uuid> --json",
+            "swbctl prepare-task <task-id> --host <host-id> --request-id <uuid> --json",
+            "swbctl prepare-task <task-id> --host <host-id> --create --project <project-id> --title <text> --checkout <checkout-id> --provider <provider> --request-id <uuid> --json",
+            "swbctl prepare-history --project <project-id> --host <host-id> --checkout <checkout-id> --request-id <uuid> --json",
+            "swbctl stop-session <session-key> --host <host-id> --json",
+            "swbctl select-surface <surface-id> --host <host-id> --client <tmux-client-id>",
+            "swbctl attach-surface <surface-id> --host <host-id>",
         )
         for command in commands:
             with self.subTest(command=command):
                 self.assertIn(command, self.docs)
-        self.assertIn("Snapshot v2 JSON", self.docs)
-        self.assertIn("PresentationPlan v2 JSON", self.docs)
-        self.assertIn("user-configured `swbctl`", self.docs)
+        self.assertIn("Fleet v1", self.docs)
+        self.assertIn("Snapshot v2", self.docs)
+        self.assertIn("PresentationPlan v2", self.docs)
+        self.assertIn("user-configured local `swbctl`", self.docs)
         self.assertIn("must not import internal Agent Switchboard", self.docs)
         self.assertIn("read its database", self.docs)
 
@@ -234,12 +242,11 @@ class DocumentationContractTests(unittest.TestCase):
         for phrase in (
             "`Qt.callLater`",
             "last-good model",
-            "Missing observations and stale data",
-            "neutral Codex or Claude",
-            "Task rows contain stable IDs",
-            "does not connect that signal",
-            "reopened or the query changes",
-            "`Process.signal(15)`",
+            "unavailable hosts",
+            "host-qualified open and closed tasks",
+            "does not connect launcher `itemsChanged()`",
+            "reopened or its query changes",
+            "kills and reaps descendants",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.docs)
@@ -247,9 +254,9 @@ class DocumentationContractTests(unittest.TestCase):
     def test_non_goals_are_explicit(self):
         for non_goal in (
             "SSH",
-            "provider hooks or liveness inference",
-            "arbitrary working-directory launch",
-            "project-catalog editing",
+            "infer provider liveness",
+            "arbitrary working",
+            "edit projects",
             "tmux locator",
             "non-niri/non-Ghostty adapters",
             "chezmoi cutover",

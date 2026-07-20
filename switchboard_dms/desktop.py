@@ -21,7 +21,7 @@ from .bridge import (
 )
 from .process import ProcessRunError, ProcessOutput, run_process
 
-ACTION_VERSION = 2
+ACTION_VERSION = 3
 MAX_ACTION_BYTES = 16 * 1024
 MAX_DESKTOP_TOKEN_LENGTH = 2048
 MAX_WINDOW_HOST_LENGTH = 256
@@ -49,11 +49,12 @@ def _bounded_text(value: object, *, maximum: int) -> str:
     return value
 
 
-def desktop_app_id(desktop_token: str) -> str:
+def desktop_app_id(desktop_token: str, host_id: str) -> str:
     """Derive a valid, opaque Wayland application ID from a desktop token."""
 
     token = _bounded_text(desktop_token, maximum=MAX_DESKTOP_TOKEN_LENGTH)
-    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    host = _bounded_text(host_id, maximum=36)
+    digest = hashlib.sha256(f"{host}\0{token}".encode("utf-8")).hexdigest()
     return f"{APP_ID_PREFIX}{digest[:32]}"
 
 
@@ -111,6 +112,7 @@ def matching_niri_window_id(
 def focus_existing_window(
     plan: Mapping[str, object],
     *,
+    host_id: str,
     window_host: str,
     timeout_ms: int,
     runner: ProcessRunner = run_process,
@@ -124,7 +126,7 @@ def focus_existing_window(
         return False
     token = plan.get("desktopToken")
     try:
-        app_id = desktop_app_id(token) if isinstance(token, str) else None
+        app_id = desktop_app_id(token, host_id) if isinstance(token, str) else None
         workspace = plan.get("workspaceId")
         workspace_id = (
             _bounded_text(workspace, maximum=1024)
@@ -160,6 +162,7 @@ def terminal_launch_argv(
     swbctl: str,
     surface_id: str,
     desktop_token: str,
+    host_id: str,
 ) -> list[str]:
     return [
         systemd_run,
@@ -169,11 +172,13 @@ def terminal_launch_argv(
         "--quiet",
         "--",
         terminal,
-        f"--class={desktop_app_id(desktop_token)}",
+        f"--class={desktop_app_id(desktop_token, host_id)}",
         "-e",
         swbctl,
         "attach-surface",
         surface_id,
+        "--host",
+        host_id,
     ]
 
 
@@ -240,6 +245,7 @@ def _blocked_error(plan: Mapping[str, object]) -> DesktopActionError:
 def _prepared_plan(
     *,
     swbctl: str,
+    host_id: str,
     session_key: str | None,
     task_id: str | None,
     create_task: bool,
@@ -268,6 +274,7 @@ def _prepared_plan(
         request_id=request_id,
         prepare_can_focus_desktop=can_focus_desktop,
         prepare_can_launch_terminal=True,
+        action_host_id=host_id,
     )
     if response.get("ok") is not True:
         raise _bridge_error(response)
@@ -280,6 +287,12 @@ def _prepared_plan(
         )
     if plan.get("kind") == "blocked":
         raise _blocked_error(plan)
+    if plan.get("hostId") != host_id:
+        raise DesktopActionError(
+            "desktop_plan_host_mismatch",
+            "The presentation plan belongs to another host.",
+            retryable=False,
+        )
     return plan
 
 
@@ -287,6 +300,7 @@ def _attach(
     plan: Mapping[str, object],
     *,
     swbctl: str,
+    host_id: str,
     terminal: str,
     which: Callable[[str], str | None],
     launcher: DetachedLauncher,
@@ -314,6 +328,7 @@ def _attach(
             swbctl=swbctl,
             surface_id=surface_id,
             desktop_token=desktop_token,
+            host_id=host_id,
         )
     )
     return {"kind": "launched", "surfaceId": surface_id}
@@ -323,6 +338,7 @@ def _open_target(
     *,
     swbctl: str,
     terminal: str,
+    host_id: str,
     session_key: str | None,
     task_id: str | None,
     create_task: bool,
@@ -352,6 +368,7 @@ def _open_target(
     request = request_id or str(uuid.uuid4())
     plan = _prepared_plan(
         swbctl=swbctl,
+        host_id=host_id,
         session_key=session_key,
         task_id=task_id,
         create_task=create_task,
@@ -370,6 +387,7 @@ def _open_target(
         return _attach(
             plan,
             swbctl=swbctl,
+            host_id=host_id,
             terminal=terminal,
             which=which,
             launcher=launcher,
@@ -389,11 +407,16 @@ def _open_target(
             max_sessions=DEFAULT_MAX_SESSIONS,
             select_surface=surface_id,
             tmux_client=client,
+            action_host_id=host_id,
         )
         if selected.get("ok") is not True:
             raise _bridge_error(selected)
         if focus_existing_window(
-            plan, window_host=window_host, timeout_ms=timeout_ms, which=which
+            plan,
+            host_id=host_id,
+            window_host=window_host,
+            timeout_ms=timeout_ms,
+            which=which,
         ):
             return {"kind": "switched", "surfaceId": surface_id}
     elif kind == "focus":
@@ -404,7 +427,11 @@ def _open_target(
                 retryable=False,
             )
         if focus_existing_window(
-            plan, window_host=window_host, timeout_ms=timeout_ms, which=which
+            plan,
+            host_id=host_id,
+            window_host=window_host,
+            timeout_ms=timeout_ms,
+            which=which,
         ):
             return {"kind": "focused", "surfaceId": surface_id}
     else:
@@ -416,6 +443,7 @@ def _open_target(
 
     fallback = _prepared_plan(
         swbctl=swbctl,
+        host_id=host_id,
         session_key=session_key,
         task_id=task_id,
         create_task=create_task,
@@ -437,6 +465,7 @@ def _open_target(
     return _attach(
         fallback,
         swbctl=swbctl,
+        host_id=host_id,
         terminal=terminal,
         which=which,
         launcher=launcher,
@@ -447,6 +476,7 @@ def open_session(
     *,
     swbctl: str,
     terminal: str,
+    host_id: str,
     session_key: str,
     window_host: str,
     timeout_ms: int,
@@ -459,6 +489,7 @@ def open_session(
     return _open_target(
         swbctl=swbctl,
         terminal=terminal,
+        host_id=host_id,
         session_key=session_key,
         task_id=None,
         create_task=False,
@@ -479,6 +510,7 @@ def open_task(
     *,
     swbctl: str,
     terminal: str,
+    host_id: str,
     task_id: str,
     window_host: str,
     timeout_ms: int,
@@ -496,6 +528,7 @@ def open_task(
     return _open_target(
         swbctl=swbctl,
         terminal=terminal,
+        host_id=host_id,
         session_key=None,
         task_id=task_id,
         create_task=create,
@@ -516,6 +549,7 @@ def open_history(
     *,
     swbctl: str,
     terminal: str,
+    host_id: str,
     project_id: str,
     checkout_id: str | None,
     window_host: str,
@@ -529,6 +563,7 @@ def open_history(
     return _open_target(
         swbctl=swbctl,
         terminal=terminal,
+        host_id=host_id,
         session_key=None,
         task_id=None,
         create_task=False,
@@ -548,6 +583,7 @@ def open_history(
 def stop_session(
     *,
     swbctl: str,
+    host_id: str,
     session_key: str,
     timeout_ms: int,
 ) -> dict[str, object]:
@@ -559,6 +595,7 @@ def stop_session(
         timeout_ms=timeout_ms,
         max_sessions=DEFAULT_MAX_SESSIONS,
         stop_session=session_key,
+        action_host_id=host_id,
     )
     if response.get("ok") is not True:
         raise _bridge_error(response)
@@ -698,6 +735,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--swbctl", default="swbctl", type=_executable)
     parser.add_argument("--terminal", default="ghostty", type=_executable)
     parser.add_argument("--window-host", required=True, type=_window_host)
+    parser.add_argument("--host", dest="host_id", required=True, type=_uuid)
     parser.add_argument(
         "--timeout-ms",
         default=DEFAULT_TIMEOUT_MS,
@@ -750,6 +788,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.stop_session is not None:
             action = stop_session(
                 swbctl=args.swbctl,
+                host_id=args.host_id,
                 session_key=args.stop_session,
                 timeout_ms=args.timeout_ms,
             )
@@ -757,6 +796,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             action = open_session(
                 swbctl=args.swbctl,
                 terminal=args.terminal,
+                host_id=args.host_id,
                 session_key=args.session_key,
                 window_host=args.window_host,
                 timeout_ms=args.timeout_ms,
@@ -766,6 +806,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             action = open_history(
                 swbctl=args.swbctl,
                 terminal=args.terminal,
+                host_id=args.host_id,
                 project_id=args.project,
                 checkout_id=args.checkout,
                 window_host=args.window_host,
@@ -776,6 +817,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             action = open_task(
                 swbctl=args.swbctl,
                 terminal=args.terminal,
+                host_id=args.host_id,
                 task_id=task_id,
                 provider=args.provider,
                 create=args.create,

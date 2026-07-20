@@ -1,20 +1,21 @@
 # Switchboard for DMS
 
-Switchboard is the task-first DankMaterialShell launcher for local Agent
-Switchboard work. Its default view lists open tasks, groups them by project,
-keeps unassigned provider sessions in Inbox, and exposes closed tasks
-separately. Codex, Claude Code, and not-yet-started tasks use distinct icons;
-normal rows show concise project, optional nondefault worktree, state, and age
-instead of absolute paths.
+Switchboard is the task-first DankMaterialShell launcher for local and
+configured remote Agent Switchboard work. Its default view lists open tasks,
+merges compatible projects across hosts, keeps unassigned provider sessions in
+Inbox, and exposes closed tasks separately. Codex, Claude Code, and
+not-yet-started tasks use distinct icons; normal rows show concise project,
+optional remote host, optional nondefault worktree, state, and age instead of
+absolute paths or SSH targets.
 
-The launcher reads a validated Snapshot v2 asynchronously into a last-good
-cache and persists only that privacy-bounded frontend model in DMS plugin
-state. Selecting a task invokes `prepare-task`; selecting an Inbox
-session invokes `prepare-open`. In a project category, a nonempty query offers
-Codex and Claude creation rows using the query as the task title. The desktop
-helper generates stable task and request UUIDs and calls atomic new-task
-preparation, so a focus fallback cannot create a second task or provider
-runtime.
+The launcher reads Fleet v1, whose host entries each contain an independently
+validated Snapshot v2, into a last-good cache. It persists only the bounded
+frontend model in DMS plugin state. Selecting a task invokes `prepare-task`;
+selecting an Inbox session invokes `prepare-open`. In a project category, a
+nonempty query offers Codex and Claude creation rows for every eligible host.
+The desktop helper generates stable task and request UUIDs and calls atomic
+new-task preparation, so a focus fallback cannot create a second task or
+provider runtime.
 
 Claude's native history picker and safe launch-owned runtime stop are context
 menu actions. They do not create duplicate search rows. History remains inside
@@ -23,12 +24,14 @@ launch, surface, tmux, PID/birth, UID, and process-group checks.
 
 ## Boundary
 
-`switchboard-bridge` runs one user-configured `swbctl` executable token without
-a shell and consumes only public Snapshot v2, PresentationPlan v2, and
-SessionAction v2 JSON. It does not import Agent Switchboard internals, read its
-database, invoke Git, inspect provider transcripts, or own provider/tmux
-lifecycle. `switchboard-open` executes validated focus/switch/attach plans and
-delegates final tmux attachment back to `swbctl attach-surface`.
+`switchboard-bridge` runs one user-configured local `swbctl` executable token
+without a shell and consumes only public Fleet v1, Snapshot v2,
+PresentationPlan v2, and SessionAction v2 JSON. It does not import Agent
+Switchboard internals, read its database or remote configuration, invoke Git or
+SSH, inspect provider transcripts, or own provider/tmux lifecycle.
+`switchboard-open` executes validated host-qualified focus/switch/attach plans
+and delegates final tmux attachment back to local `swbctl attach-surface`.
+Core alone decides whether an action crosses SSH.
 
 The bridge uses only the Python standard library and no third-party Python
 packages. That means dependency-free Python code, not no runtime dependencies.
@@ -36,18 +39,18 @@ packages. That means dependency-free Python code, not no runtime dependencies.
 ## Runtime prerequisites
 
 - Python 3.12 or newer.
-- Agent Switchboard 0.2.0's `swbctl`, installed on `PATH` or configured as one
-  executable token. The value is not a shell command and cannot include
-  arguments.
+- An Agent Switchboard 0.2.0 development build exposing Fleet v1 and
+  host-qualified actions, installed on `PATH` or configured as one executable
+  token. The value is not a shell command and cannot include arguments.
 - DMS 1.5.0 or newer and the Quickshell runtime supplied by DMS.
 - niri, Ghostty, and a systemd user manager for desktop presentation.
 
 Plugin settings contain the `swbctl` and terminal executable tokens, a
-100-60000 ms snapshot timeout, and a 5-300 second refresh interval. A retained
-read happens first; stale data coalesces one full reconciliation. Parse,
-validation, process, and timeout failures keep the last-good snapshot visible.
-Missing observations and stale data are not converted into activity guesses,
-and an absent provider capability remains neutral.
+100-60000 ms fleet timeout, and a 5-300 second refresh interval. A retained
+read happens first; stale data coalesces one fleet refresh. Parse, validation,
+process, and timeout failures keep the last-good fleet visible. Missing
+observations, unavailable hosts, and stale data are not converted into
+activity guesses.
 
 DMS 1.5.0 does not consume launcher `itemsChanged()` as a live result-list
 mutation. A validated persisted model makes normal shell starts and plugin
@@ -76,14 +79,15 @@ Read retained or fully reconciled state:
 Open an existing task or exact Inbox session:
 
 ```sh
-./switchboard-open --window-host HOST --task TASK-UUID
-./switchboard-open --window-host HOST HOST-ID:codex:SESSION-UUID
+./switchboard-open --host HOST-UUID --window-host HOST --task TASK-UUID
+./switchboard-open --host HOST-UUID --window-host HOST \
+  HOST-UUID:codex:SESSION-UUID
 ```
 
 Create and open a task atomically:
 
 ```sh
-./switchboard-open --window-host HOST --create \
+./switchboard-open --host HOST-UUID --window-host HOST --create \
   --project PROJECT-UUID --title "Fix picker layout" \
   --checkout CHECKOUT-UUID --provider codex
 ```
@@ -91,9 +95,10 @@ Create and open a task atomically:
 Open Claude history or stop one core-confirmed Claude runtime:
 
 ```sh
-./switchboard-open --window-host HOST --history \
+./switchboard-open --host HOST-UUID --window-host HOST --history \
   --project PROJECT-UUID --checkout CHECKOUT-UUID
-./switchboard-open --window-host HOST --stop HOST-ID:claude:SESSION-UUID
+./switchboard-open --host HOST-UUID --window-host HOST \
+  --stop HOST-UUID:claude:SESSION-UUID
 ```
 
 Managed helpers emit one bounded canonical JSON record on stdout and keep
@@ -108,9 +113,10 @@ Run the complete deterministic check lane:
 ./scripts/check
 ```
 
-It covers Snapshot v2/model v3 projection, task categories and row formatting,
-atomic task argv, context-action routing, niri/Ghostty execution, process-group
-cleanup and fault injection, static QML contracts, and documentation.
+It covers Fleet v1/model v4 projection, host-qualified task/category/row
+behavior, atomic task argv, remote-owner action routing, niri/Ghostty execution,
+process-group cleanup and fault injection, static QML contracts, and
+documentation.
 
 Install this checkout as the local development plugin:
 
@@ -147,10 +153,10 @@ explicitly:
 ```
 
 It installs rollback traps before mutation; see
-[docs/live-integration.md](docs/live-integration.md) before use. The repository
-does not perform a chezmoi cutover, add SSH, edit the project catalog, accept an
-arbitrary working-directory launch, expose a direct tmux locator, implement
-non-niri/non-Ghostty adapters, or become a rich widget.
+[docs/live-integration.md](docs/live-integration.md) before use. The adapter
+does not perform a chezmoi cutover, construct SSH commands, edit the project
+catalog, accept an arbitrary working-directory launch, expose a direct tmux
+locator, implement non-niri/non-Ghostty adapters, or become a rich widget.
 
 For local diagnostics, also run:
 

@@ -1,109 +1,107 @@
-# Bridge and Desktop Contract v2
+# Bridge and Desktop Contract v3
 
-## Snapshot mode
+## Fleet mode
 
 The retained invocation is exactly:
 
 ```text
-[EXECUTABLE, "snapshot", "--json"]
+[EXECUTABLE, "fleet", "--json"]
 ```
 
 The refresh invocation is exactly:
 
 ```text
-[EXECUTABLE, "snapshot", "--reconcile", "full", "--json"]
+[EXECUTABLE, "fleet", "--refresh", "--json"]
 ```
 
 `EXECUTABLE` is one configured token, not a shell command. The bridge uses only
 the Python standard library; this means no third-party Python packages, not no
 runtime dependencies.
 
-The bridge accepts one Snapshot v2 JSON document, validates the required
-projects, projectRepositories, repositories, checkouts, tasks, sessions,
-runtimes, surfaces, capabilities, and errors arrays, checks their identity
-backreferences, and emits model v3:
+The bridge accepts one Fleet v1 document containing bounded, individually
+validated Snapshot v2 documents. It validates host order, stable identities,
+reachability/error rules, embedded snapshot ownership and timestamps, and
+Snapshot project/repository/checkout/task/session backreferences. It emits
+bridge v3 and frontend model v4:
 
 ```json
-{"bridgeVersion":2,"model":{"modelVersion":3,"sourceSchemaVersion":2,"sourceProtocolVersion":2},"ok":true}
+{"bridgeVersion":3,"model":{"modelVersion":4,"sourceSchemaVersion":2,"sourceProtocolVersion":2,"sourceFleetVersion":1},"ok":true}
 ```
 
-Snapshot v1 produces `snapshot_invalid_protocol`. Unknown safe source fields
-are ignored. Sensitive future fields, terminal controls, invalid UTF-8,
+Model v4 merges compatible projects by ProjectId but retains per-host routes.
+Task identity is `(HostId, TaskId)` and Inbox identity remains the canonical
+host-qualified session key. A remote before first success can appear as a host
+without rows. An unavailable remote can retain last-good rows marked offline
+or stale. SSH targets and absolute paths are never projected.
+
+Fleet or Snapshot v1 produces `fleet_invalid_protocol`. Unknown safe source
+fields are ignored. Sensitive future fields, terminal controls, invalid UTF-8,
 non-finite numbers, excessive nesting/count/size, malformed UUIDs, and
-inconsistent references fail closed. Absolute checkout paths and private Git
-administrative data are never projected.
+inconsistent references fail closed.
 
 ## Prepare modes
 
-Existing Inbox session:
+Every action carries the owning HostId to the configured local core. Exact argv
+is:
 
 ```text
-[EXECUTABLE, "prepare-open", SESSION_KEY, "--request-id", UUID,
+[EXECUTABLE, "prepare-open", SESSION_KEY,
+ "--host", HOST_ID, "--request-id", UUID,
  "--can-focus-desktop", "--can-launch-terminal", "--json"]
-```
 
-Existing task:
-
-```text
-[EXECUTABLE, "prepare-task", TASK_ID, "--request-id", UUID,
+[EXECUTABLE, "prepare-task", TASK_ID,
+ "--host", HOST_ID, "--request-id", UUID,
  "--can-focus-desktop", "--can-launch-terminal", "--json"]
-```
 
-Atomic task create:
-
-```text
-[EXECUTABLE, "prepare-task", TASK_ID, "--create",
+[EXECUTABLE, "prepare-task", TASK_ID, "--host", HOST_ID, "--create",
  "--project", PROJECT_ID, "--title", TITLE,
  "--checkout", CHECKOUT_ID, "--provider", PROVIDER,
  "--request-id", UUID, "--can-focus-desktop",
  "--can-launch-terminal", "--json"]
-```
 
-Claude history:
-
-```text
 [EXECUTABLE, "prepare-history", "--project", PROJECT_ID,
- "--checkout", CHECKOUT_ID, "--request-id", UUID,
- "--can-focus-desktop", "--can-launch-terminal", "--json"]
+ "--host", HOST_ID, "--checkout", CHECKOUT_ID,
+ "--request-id", UUID, "--can-focus-desktop",
+ "--can-launch-terminal", "--json"]
 ```
 
-The checkout argument is optional at the bridge/desktop boundary when core can
-route the project's default. DMS creation rows include the validated default
-checkout explicitly.
+Checkout is optional at the bridge/desktop boundary when core can resolve the
+host-local default. DMS creation rows include an eligible default checkout.
 
-Successful prepare responses contain one validated PresentationPlan v2:
+Successful prepare responses contain one independently validated
+PresentationPlan v2:
 
 ```json
-{"bridgeVersion":2,"ok":true,"plan":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"focus","surfaceId":"33333333-3333-4333-8333-333333333333","desktopToken":"opaque"}}
+{"bridgeVersion":3,"ok":true,"plan":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"focus","surfaceId":"33333333-3333-4333-8333-333333333333","desktopToken":"opaque"}}
 ```
 
-`switchboard-open` generates request IDs. For new-task selection it also
-generates the TaskId. A focus miss repeats the identical prepare request with
-desktop focus disabled, so core's reservation remains idempotent.
+The plan HostId must equal the requested owner. `switchboard-open` generates
+request IDs and, for creation, the TaskId. A focus miss repeats the same target
+and request with desktop focus disabled, preserving core idempotency.
 
-## Stop and surface selection
+## Stop, select, and attach
 
-Stop uses exactly:
+Stop and in-terminal selection use:
 
 ```text
-[EXECUTABLE, "stop-session", CLAUDE_SESSION_KEY, "--json"]
+[EXECUTABLE, "stop-session", CLAUDE_SESSION_KEY,
+ "--host", HOST_ID, "--json"]
+
+[EXECUTABLE, "select-surface", SURFACE_ID,
+ "--host", HOST_ID, "--client", TMUX_CLIENT]
 ```
 
-and emits:
-
-```json
-{"action":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"stop","sessionKey":"11111111-1111-4111-8111-111111111111:claude:55555555-5555-4555-8555-555555555555","status":"stopped"},"bridgeVersion":2,"ok":true}
-```
-
-An in-terminal switch selects a validated surface with:
+The launched Ghostty executes only:
 
 ```text
-[EXECUTABLE, "select-surface", SURFACE_ID, "--client", TMUX_CLIENT]
+[EXECUTABLE, "attach-surface", SURFACE_ID, "--host", HOST_ID]
 ```
 
-Successful desktop execution emits a separate `actionVersion: 2` envelope with
-`focused`, `switched`, `launched`, or `stopped`. QML never receives a raw tmux
-locator.
+Core decides whether a host-qualified command is local or remote. DMS never
+constructs SSH argv and never receives a raw tmux target. Stop consumes one
+validated SessionAction v2. Successful desktop execution emits a separate
+`actionVersion: 3` envelope with `focused`, `switched`, `launched`, or
+`stopped`.
 
 ## Framing and limits
 
@@ -113,25 +111,25 @@ never copied into frontend output. The bridge emits one canonical JSON object
 plus LF, keeps stderr empty, exits 0 for success, and exits 1 for a structured
 failure. Argument errors are argparse exit 2 with empty stdout.
 
-The bridge bounds source bytes, JSON depth, strings, arrays, objects, projected
-tasks, Inbox sessions, warnings, and final output. `--max-sessions` limits only
-Inbox projection; task rows have their own structural bound. Timeout, output
-overflow, read/selector failure, and unexpected exceptions kill and reap the
-entire child process group.
+The bridge bounds source bytes, JSON depth, strings, arrays, objects, hosts,
+project routes, tasks, Inbox sessions, warnings, and final output.
+`--max-sessions` limits Inbox projection; task rows have a separate bound.
+Timeout, output overflow, read/selector failure, and unexpected exceptions
+kill and reap the entire child process group.
 
-Representative failure codes:
+Representative failures are:
 
 | Code | Retryable | Meaning |
 | --- | --- | --- |
-| `snapshot_invalid_utf8` | no | Source output was not UTF-8. |
-| `snapshot_invalid_json` | no | Framing or JSON syntax was invalid. |
-| `snapshot_invalid_protocol` | no | The document was not Snapshot v2. |
+| `fleet_invalid_utf8` | no | Source output was not UTF-8. |
+| `fleet_invalid_json` | no | Framing or JSON syntax was invalid. |
+| `fleet_invalid_protocol` | no | The document was not compatible Fleet v1. |
 | `plan_invalid_protocol` | no | The document was not PresentationPlan v2. |
+| `desktop_plan_host_mismatch` | no | Core returned a plan for another host. |
 | `swbctl_nonzero_exit` | yes | Core exited unsuccessfully. |
 | `process_timeout` | yes | The configured deadline expired. |
 | `stdout_overflow` | no | Source stdout exceeded the byte limit. |
-| `bridge_output_overflow` | no | The final private envelope exceeded its limit. |
+| `bridge_output_overflow` | no | The frontend envelope exceeded its limit. |
 
-The bridge is frontend glue, not a provider adapter. It does not read SQLite,
-invoke Codex or Claude, inspect transcripts, run Git, execute SSH, or manage
-tmux directly.
+The bridge is frontend glue. It does not read SQLite, invoke providers, inspect
+transcripts, run Git or SSH, or manage tmux directly.

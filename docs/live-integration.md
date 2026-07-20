@@ -1,8 +1,8 @@
 # Live DMS integration
 
-> The repository-owned harness now targets Snapshot v2/model v3 task and Inbox
-> rows. Phase 4D installed acceptance is recorded below; older Phase 1 through
-> 3C location/session-list observations remain historical evidence.
+> The repository-owned harness now targets Fleet v1/model v4 task and Inbox
+> rows. Phase 4D/4E installed acceptance is recorded below; older Phase 1
+> through 3C location/session-list observations remain historical evidence.
 
 ## Supported DMS paths
 
@@ -79,10 +79,9 @@ marker names only. Signal handling is deferred across sampler publication and
 wait/reap bookkeeping, so rollback never targets a reaped or reused PID. The
 retained gate
 requires both the bridge with its configured `swbctl` and exact
-`snapshot --json`; after the five-second model becomes stale, the refresh gate
-requires the bridge `--refresh` form and exact
-`snapshot --reconcile full --json`. Raw process arguments and snapshot output
-are not saved.
+`fleet --json`; after the five-second model becomes stale, the refresh gate
+requires the bridge `--refresh` form and exact `fleet --refresh --json`. Raw
+process arguments and Fleet output are not saved.
 
 Logs come exclusively from the verified `dms.service` user journal, bounded by
 the cursor captured before installation:
@@ -126,8 +125,8 @@ leader, and remove the temporary tree. No debug-retention option is provided.
 It requires an active display and verifies all of the following without
 printing raw model data:
 
-- a nonempty retained model and exactly one internal match for a real session
-  identifier;
+- a nonempty retained model and exactly one internal match for a real task or
+  session identifier;
 - positive settings height and focus;
 - a full refresh with an advanced generation and source timestamp;
 - exact last-good model retention through `executable_not_found` and
@@ -367,6 +366,43 @@ cache is stale, DMS may still log one writer-recreation warning before the
 follow-up succeeds; the bounded cache, picker rows, and bridge health are not
 affected. Switchboard preserves eventual atomic persistence without taking
 ownership of DMS's state path.
+
+## Phase 5 local Fleet acceptance
+
+The 2026-07-20 implementation exercise used DMS 1.5.2, Quickshell 0.3.0,
+Qt 6.11.1, core `0.2.0` built from the Phase 5 checkout, and adapter `0.3.0`.
+The deterministic lane passed 97 Python tests, 15 JavaScript behavior groups,
+Qt formatting, Ruff, and package Pyright. Core passed all 638 tests.
+
+A direct retained read produced Fleet v1 with one local host. The bridge
+projected bridge v3/model v4 with one task and 68 Inbox sessions. The
+installed-import harness, using a private copy of Switchboard state, passed
+retained read, model-v4 cache round trip, exact query, settings focus, full
+Fleet refresh, last-good retention through executable and process-start
+failure, and both recovery paths. The initial tool shell lacked display
+variables; rerunning with only the active DMS process's display/session
+environment reached the real Wayland component without changing live DMS
+state.
+
+A plugin-only reload correctly encountered the fresh-shell boundary for the
+new physical `SwitchboardModelV4.js` module. One documented DMS-only restart
+loaded the new module; exact Claude and Codex PID sets remained unchanged. The
+first read then exposed that normal `swbctl` lookup still selected the prior
+dogfood artifact. Reinstalling the current checkout with the documented
+no-cache `uv tool` command and requesting one bounded IPC refresh recovered the
+installed plugin to bridge 3/model 4, one task, 68 Inbox sessions, and no
+failure. The DMS PID remained stable across that final refresh.
+
+`swbctl doctor` found no federation or provider-contract error, but its live
+hook benchmark classified both providers unhealthy because warm p95 was about
+130 ms against the 125 ms performance budget. That performance-only result did
+not block Fleet or DMS validation.
+
+No remote endpoint is configured on this host, so this is local Fleet and
+installed-DMS acceptance, not live SSH parity. A guarded remote
+fetch/open/create/continuation exercise remains pending an explicitly
+configured test host. No provider was launched, stopped, restarted, or
+signalled during this acceptance.
 
 ## Qt 6 and automation boundary
 

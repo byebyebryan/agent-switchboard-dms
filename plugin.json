@@ -3,7 +3,7 @@
   "id": "switchboard",
   "name": "Switchboard",
   "description": "Agent Switchboard launcher integration for DMS.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": "Bryan Bai",
   "type": "launcher",
   "capabilities": [
