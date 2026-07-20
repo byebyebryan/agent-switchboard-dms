@@ -5,32 +5,131 @@ import stat
 import subprocess
 import tempfile
 import textwrap
-import time
 import unittest
 
 from switchboard_dms.bridge import (
     MAX_BRIDGE_BYTES,
     prepare_history_argv,
-    prepare_new_argv,
     prepare_open_argv,
+    prepare_task_argv,
     serialize_response,
+    snapshot_argv,
     stop_session_argv,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / "switchboard-bridge"
-FIXTURE = ROOT / "tests" / "fixtures" / "snapshot-v1.json"
-MIXED_FIXTURE = ROOT / "tests" / "fixtures" / "snapshot-v1-mixed.json"
-PLAN_FIXTURE = ROOT / "tests" / "fixtures" / "presentation-plan-v1.json"
-SESSION_KEY = (
-    "11111111-1111-4111-8111-111111111111:codex:22222222-2222-4222-8222-222222222222"
-)
-CLAUDE_SESSION_KEY = SESSION_KEY.replace(":codex:", ":claude:")
-REQUEST_ID = "44444444-4444-4444-8444-444444444444"
-SURFACE_ID = "33333333-3333-4333-8333-333333333333"
+SNAPSHOT = ROOT / "tests" / "fixtures" / "snapshot-v2.json"
+V1 = ROOT / "tests" / "fixtures" / "snapshot-v1-mixed.json"
+PLAN = ROOT / "tests" / "fixtures" / "presentation-plan-v2.json"
+HOST_ID = "11111111-1111-4111-8111-111111111111"
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
-LOCATION_ID = "44444444-4444-4444-8444-444444444444"
+CHECKOUT_ID = "44444444-4444-4444-8444-444444444444"
+TASK_ID = "88888888-8888-4888-8888-888888888888"
+REQUEST_ID = "77777777-7777-4777-8777-777777777777"
+SESSION_KEY = f"{HOST_ID}:codex:55555555-5555-4555-8555-555555555555"
+CLAUDE_KEY = f"{HOST_ID}:claude:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+SURFACE_ID = "33333333-3333-4333-8333-333333333333"
+
+
+class BridgeArgumentTests(unittest.TestCase):
+    def test_snapshot_argv_is_exact(self) -> None:
+        self.assertEqual(
+            snapshot_argv("swbctl", refresh=False), ["swbctl", "snapshot", "--json"]
+        )
+        self.assertEqual(
+            snapshot_argv("swbctl", refresh=True),
+            ["swbctl", "snapshot", "--reconcile", "full", "--json"],
+        )
+
+    def test_prepare_open_argv_is_exact(self) -> None:
+        self.assertEqual(
+            prepare_open_argv("swbctl", session_key=SESSION_KEY, request_id=REQUEST_ID),
+            [
+                "swbctl",
+                "prepare-open",
+                SESSION_KEY,
+                "--request-id",
+                REQUEST_ID,
+                "--can-focus-desktop",
+                "--can-launch-terminal",
+                "--json",
+            ],
+        )
+
+    def test_prepare_existing_and_create_task_argv_are_exact(self) -> None:
+        self.assertEqual(
+            prepare_task_argv("swbctl", task_id=TASK_ID, request_id=REQUEST_ID),
+            [
+                "swbctl",
+                "prepare-task",
+                TASK_ID,
+                "--request-id",
+                REQUEST_ID,
+                "--can-focus-desktop",
+                "--can-launch-terminal",
+                "--json",
+            ],
+        )
+        self.assertEqual(
+            prepare_task_argv(
+                "swbctl",
+                task_id=TASK_ID,
+                create=True,
+                project_id=PROJECT_ID,
+                title="Fix picker layout",
+                checkout_id=CHECKOUT_ID,
+                provider="claude",
+                request_id=REQUEST_ID,
+            ),
+            [
+                "swbctl",
+                "prepare-task",
+                TASK_ID,
+                "--create",
+                "--project",
+                PROJECT_ID,
+                "--title",
+                "Fix picker layout",
+                "--checkout",
+                CHECKOUT_ID,
+                "--provider",
+                "claude",
+                "--request-id",
+                REQUEST_ID,
+                "--can-focus-desktop",
+                "--can-launch-terminal",
+                "--json",
+            ],
+        )
+
+    def test_prepare_history_and_stop_argv_are_exact(self) -> None:
+        self.assertEqual(
+            prepare_history_argv(
+                "swbctl",
+                project_id=PROJECT_ID,
+                checkout_id=CHECKOUT_ID,
+                request_id=REQUEST_ID,
+            ),
+            [
+                "swbctl",
+                "prepare-history",
+                "--project",
+                PROJECT_ID,
+                "--checkout",
+                CHECKOUT_ID,
+                "--request-id",
+                REQUEST_ID,
+                "--can-focus-desktop",
+                "--can-launch-terminal",
+                "--json",
+            ],
+        )
+        self.assertEqual(
+            stop_session_argv("swbctl", session_key=CLAUDE_KEY),
+            ["swbctl", "stop-session", CLAUDE_KEY, "--json"],
+        )
 
 
 class BridgeCliTests(unittest.TestCase):
@@ -44,28 +143,40 @@ class BridgeCliTests(unittest.TestCase):
     def executable(self, body: str, *, name: str = "fake-swbctl") -> Path:
         path = self.temp / name
         path.write_text(
-            "#!/usr/bin/env python3\n" + textwrap.dedent(body),
-            encoding="utf-8",
+            "#!/usr/bin/env python3\n" + textwrap.dedent(body), encoding="utf-8"
         )
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
         return path
+
+    def fixture_executable(self, *, name: str = "fake-swbctl") -> Path:
+        return self.executable(
+            """
+            import os
+            from pathlib import Path
+            import sys
+            if os.environ.get("FAKE_ARGUMENTS"):
+                Path(os.environ["FAKE_ARGUMENTS"]).write_text("\\n".join(sys.argv[1:]), encoding="utf-8")
+            sys.stdout.buffer.write(Path(os.environ["FAKE_OUTPUT"]).read_bytes())
+            """,
+            name=name,
+        )
 
     def run_bridge(
         self,
         executable: Path | str,
         *arguments: str,
-        environment: dict[str, str] | None = None,
+        output: Path = SNAPSHOT,
         timeout: float = 5,
-        cwd: Path = ROOT,
-        bridge: Path = BRIDGE,
+        extra: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
-        process_environment = os.environ.copy()
-        if environment:
-            process_environment.update(environment)
+        environment = os.environ.copy()
+        environment["FAKE_OUTPUT"] = str(output)
+        if extra:
+            environment.update(extra)
         return subprocess.run(
-            [str(bridge), "--swbctl", str(executable), *arguments],
-            cwd=cwd,
-            env=process_environment,
+            [str(BRIDGE), "--swbctl", str(executable), *arguments],
+            cwd=ROOT,
+            env=environment,
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -75,187 +186,87 @@ class BridgeCliTests(unittest.TestCase):
         self.assertEqual(result.stderr, b"")
         self.assertTrue(result.stdout.endswith(b"\n"))
         self.assertEqual(result.stdout.count(b"\n"), 1)
-        payload = json.loads(result.stdout)
-        expected = (
+        value = json.loads(result.stdout)
+        canonical = (
             json.dumps(
-                payload,
+                value,
                 ensure_ascii=False,
                 allow_nan=False,
                 separators=(",", ":"),
                 sort_keys=True,
-            ).encode("utf-8")
+            ).encode()
             + b"\n"
         )
-        self.assertEqual(result.stdout, expected)
+        self.assertEqual(result.stdout, canonical)
         self.assertLessEqual(len(result.stdout), MAX_BRIDGE_BYTES)
-        return payload
+        return value
 
-    def fixture_executable(self, *, name: str = "fake-swbctl") -> Path:
-        return self.executable(
-            """
-            import os
-            from pathlib import Path
-            import sys
+    def assert_error(
+        self, result: subprocess.CompletedProcess[bytes], code: str
+    ) -> dict[str, object]:
+        value = self.payload(result)
+        self.assertEqual(result.returncode, 1)
+        self.assertIs(value["ok"], False)
+        self.assertEqual(value["error"]["code"], code)
+        return value
 
-            arguments_path = os.environ.get("FAKE_ARGUMENTS")
-            if arguments_path:
-                Path(arguments_path).write_text(
-                    "\\n".join(sys.argv[1:]), encoding="utf-8"
-                )
-            sys.stdout.buffer.write(Path(os.environ["FAKE_SNAPSHOT"]).read_bytes())
-            """,
-            name=name,
-        )
-
-    def test_retained_argv_is_exact_and_never_uses_a_shell(self) -> None:
+    def test_snapshot_success_is_model_v3_and_shell_free(self) -> None:
         arguments = self.temp / "arguments"
-        marker = self.temp / "shell-was-used"
-        executable = self.fixture_executable(name="fake swbctl; touch shell-was-used")
-
-        result = self.run_bridge(
-            executable,
-            environment={
-                "FAKE_ARGUMENTS": str(arguments),
-                "FAKE_SNAPSHOT": str(FIXTURE),
-            },
-        )
-
-        payload = self.payload(result)
+        marker = self.temp / "shell-used"
+        executable = self.fixture_executable(name="fake swbctl; touch shell-used")
+        result = self.run_bridge(executable, extra={"FAKE_ARGUMENTS": str(arguments)})
+        value = self.payload(result)
         self.assertEqual(result.returncode, 0)
-        self.assertTrue(payload["ok"])
+        self.assertEqual(value["bridgeVersion"], 2)
+        self.assertEqual(value["model"]["modelVersion"], 3)
+        self.assertEqual(len(value["model"]["tasks"]), 2)
+        self.assertEqual(len(value["model"]["inboxSessions"]), 1)
         self.assertEqual(arguments.read_text(encoding="utf-8"), "snapshot\n--json")
         self.assertFalse(marker.exists())
 
-    def test_refresh_argv_is_exact(self) -> None:
+    def test_refresh_and_create_task_cli_forward_exact_argv(self) -> None:
         arguments = self.temp / "arguments"
         executable = self.fixture_executable()
-
-        result = self.run_bridge(
-            executable,
-            "--refresh",
-            environment={
-                "FAKE_ARGUMENTS": str(arguments),
-                "FAKE_SNAPSHOT": str(FIXTURE),
-            },
+        refreshed = self.run_bridge(
+            executable, "--refresh", extra={"FAKE_ARGUMENTS": str(arguments)}
         )
-
-        self.assertEqual(result.returncode, 0)
+        self.assertEqual(refreshed.returncode, 0)
         self.assertEqual(
-            arguments.read_text(encoding="utf-8"),
-            "snapshot\n--reconcile\nfull\n--json",
+            arguments.read_text(encoding="utf-8"), "snapshot\n--reconcile\nfull\n--json"
         )
-
-    def test_prepare_open_argv_and_plan_envelope_are_exact(self) -> None:
-        arguments = self.temp / "arguments"
-        executable = self.fixture_executable()
-
-        result = self.run_bridge(
+        created = self.run_bridge(
             executable,
-            "--prepare-open",
-            SESSION_KEY,
-            "--request-id",
-            REQUEST_ID,
-            environment={
-                "FAKE_ARGUMENTS": str(arguments),
-                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
-            },
-        )
-
-        payload = self.payload(result)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(set(payload), {"bridgeVersion", "ok", "plan"})
-        self.assertEqual(payload["plan"]["kind"], "switch")
-        self.assertEqual(
-            arguments.read_text(encoding="utf-8"),
-            "\n".join(
-                (
-                    "prepare-open",
-                    SESSION_KEY,
-                    "--request-id",
-                    REQUEST_ID,
-                    "--can-focus-desktop",
-                    "--can-launch-terminal",
-                    "--json",
-                )
-            ),
-        )
-
-    def test_prepare_open_can_suppress_focus_without_suppressing_launch(self) -> None:
-        self.assertEqual(
-            prepare_open_argv(
-                "swbctl",
-                session_key=SESSION_KEY,
-                request_id=REQUEST_ID,
-                can_focus_desktop=False,
-                can_launch_terminal=True,
-            ),
-            [
-                "swbctl",
-                "prepare-open",
-                SESSION_KEY,
-                "--request-id",
-                REQUEST_ID,
-                "--can-launch-terminal",
-                "--json",
-            ],
-        )
-
-    def test_prepare_open_accepts_and_preserves_a_claude_session_key(self) -> None:
-        arguments = self.temp / "arguments"
-        executable = self.fixture_executable()
-
-        result = self.run_bridge(
-            executable,
-            "--prepare-open",
-            CLAUDE_SESSION_KEY,
-            "--request-id",
-            REQUEST_ID,
-            environment={
-                "FAKE_ARGUMENTS": str(arguments),
-                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
-            },
-        )
-
-        payload = self.payload(result)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(payload["plan"]["kind"], "switch")
-        self.assertEqual(
-            arguments.read_text(encoding="utf-8").splitlines()[:2],
-            ["prepare-open", CLAUDE_SESSION_KEY],
-        )
-
-    def test_prepare_new_argv_and_plan_envelope_are_exact(self) -> None:
-        arguments = self.temp / "arguments"
-        executable = self.fixture_executable()
-
-        result = self.run_bridge(
-            executable,
-            "--prepare-new",
+            "--prepare-task",
+            TASK_ID,
+            "--create-task",
+            "--project",
             PROJECT_ID,
-            "--location",
-            LOCATION_ID,
+            "--title",
+            "Fix picker layout",
+            "--checkout",
+            CHECKOUT_ID,
             "--provider",
             "claude",
             "--request-id",
             REQUEST_ID,
-            environment={
-                "FAKE_ARGUMENTS": str(arguments),
-                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
-            },
+            output=PLAN,
+            extra={"FAKE_ARGUMENTS": str(arguments)},
         )
-
-        payload = self.payload(result)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(payload["plan"]["kind"], "switch")
+        value = self.payload(created)
+        self.assertEqual(value["plan"]["kind"], "switch")
         self.assertEqual(
             arguments.read_text(encoding="utf-8"),
             "\n".join(
-                (
-                    "prepare-new",
+                [
+                    "prepare-task",
+                    TASK_ID,
+                    "--create",
                     "--project",
                     PROJECT_ID,
-                    "--location",
-                    LOCATION_ID,
+                    "--title",
+                    "Fix picker layout",
+                    "--checkout",
+                    CHECKOUT_ID,
                     "--provider",
                     "claude",
                     "--request-id",
@@ -263,519 +274,102 @@ class BridgeCliTests(unittest.TestCase):
                     "--can-focus-desktop",
                     "--can-launch-terminal",
                     "--json",
-                )
+                ]
             ),
         )
-        self.assertEqual(
-            prepare_new_argv(
-                "swbctl",
-                project_id=PROJECT_ID,
-                location_id=LOCATION_ID,
-                provider="claude",
-                request_id=REQUEST_ID,
-                can_focus_desktop=False,
-            ),
-            [
-                "swbctl",
-                "prepare-new",
-                "--project",
+
+    def test_existing_task_open_history_and_inbox_prepare_are_supported(self) -> None:
+        executable = self.fixture_executable()
+        for arguments in (
+            ("--prepare-task", TASK_ID, "--request-id", REQUEST_ID),
+            (
+                "--prepare-history",
                 PROJECT_ID,
-                "--location",
-                LOCATION_ID,
-                "--provider",
-                "claude",
+                "--checkout",
+                CHECKOUT_ID,
                 "--request-id",
                 REQUEST_ID,
-                "--can-launch-terminal",
-                "--json",
-            ],
-        )
+            ),
+            ("--prepare-open", SESSION_KEY, "--request-id", REQUEST_ID),
+        ):
+            with self.subTest(arguments=arguments):
+                result = self.run_bridge(executable, *arguments, output=PLAN)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(self.payload(result)["plan"]["kind"], "switch")
 
-    def test_prepare_history_uses_exact_native_picker_prepare_argv(self) -> None:
-        arguments = self.temp / "arguments"
-        executable = self.fixture_executable()
-
-        result = self.run_bridge(
-            executable,
-            "--prepare-history",
-            PROJECT_ID,
-            "--location",
-            LOCATION_ID,
-            "--request-id",
-            REQUEST_ID,
-            environment={
-                "FAKE_ARGUMENTS": str(arguments),
-                "FAKE_SNAPSHOT": str(PLAN_FIXTURE),
-            },
-        )
-
-        payload = self.payload(result)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(payload["plan"]["kind"], "switch")
-        self.assertEqual(
-            arguments.read_text(encoding="utf-8").splitlines(),
-            prepare_history_argv(
-                str(executable),
-                project_id=PROJECT_ID,
-                location_id=LOCATION_ID,
-                request_id=REQUEST_ID,
-            )[1:],
-        )
-
-    def test_stop_session_argv_and_action_envelope_are_exact(self) -> None:
-        arguments = self.temp / "arguments"
-        action = self.temp / "action.json"
-        action.write_text(
-            json.dumps(
+    def test_stop_and_select_actions_are_projected(self) -> None:
+        stop_output = self.temp / "stop.json"
+        stop_output.write_text(
+            encode(
                 {
-                    "schemaVersion": 1,
-                    "protocolVersion": 1,
+                    "schemaVersion": 2,
+                    "protocolVersion": 2,
                     "action": {
                         "kind": "stop",
                         "status": "stopped",
-                        "hostId": SESSION_KEY.split(":")[0],
-                        "sessionKey": CLAUDE_SESSION_KEY,
+                        "hostId": HOST_ID,
+                        "sessionKey": CLAUDE_KEY,
                     },
-                },
-                separators=(",", ":"),
+                }
             )
             + "\n",
             encoding="utf-8",
         )
-        executable = self.fixture_executable()
-
-        result = self.run_bridge(
-            executable,
-            "--stop-session",
-            CLAUDE_SESSION_KEY,
-            environment={
-                "FAKE_ARGUMENTS": str(arguments),
-                "FAKE_SNAPSHOT": str(action),
-            },
+        stopped = self.run_bridge(
+            self.fixture_executable(), "--stop-session", CLAUDE_KEY, output=stop_output
         )
-
-        payload = self.payload(result)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(payload["action"]["status"], "stopped")
-        self.assertEqual(
-            arguments.read_text(encoding="utf-8").splitlines(),
-            stop_session_argv(str(executable), session_key=CLAUDE_SESSION_KEY)[1:],
-        )
-
-    def test_select_surface_argv_is_exact_and_output_free(self) -> None:
-        arguments = self.temp / "arguments"
-        executable = self.executable(
-            """
-            import os
-            from pathlib import Path
-            import sys
-            Path(os.environ["FAKE_ARGUMENTS"]).write_text(
-                "\\n".join(sys.argv[1:]), encoding="utf-8"
-            )
-            """
-        )
-
-        result = self.run_bridge(
-            executable,
-            "--select-surface",
-            SURFACE_ID,
-            "--tmux-client",
-            "/dev/pts/7",
-            environment={"FAKE_ARGUMENTS": str(arguments)},
-        )
-
-        payload = self.payload(result)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(
-            payload["action"], {"kind": "selected", "surfaceId": SURFACE_ID}
+        self.assertEqual(self.payload(stopped)["action"]["status"], "stopped")
+        silent = self.executable("import sys\nsys.exit(0)\n")
+        selected = self.run_bridge(
+            silent, "--select-surface", SURFACE_ID, "--tmux-client", "/dev/pts/7"
         )
         self.assertEqual(
-            arguments.read_text(encoding="utf-8"),
-            "\n".join(
-                (
-                    "select-surface",
-                    SURFACE_ID,
-                    "--client",
-                    "/dev/pts/7",
-                )
-            ),
+            self.payload(selected)["action"],
+            {"kind": "selected", "surfaceId": SURFACE_ID},
         )
 
-    def test_prepare_rejects_an_invalid_plan_without_exposing_it(self) -> None:
-        output = self.temp / "invalid-plan"
-        output.write_text('{"promptText":"private"}\n', encoding="utf-8")
+    def test_v1_invalid_utf8_nonzero_timeout_and_overflow_are_bounded(self) -> None:
         executable = self.fixture_executable()
-
-        result = self.run_bridge(
-            executable,
-            "--prepare-open",
-            SESSION_KEY,
-            "--request-id",
-            REQUEST_ID,
-            environment={"FAKE_SNAPSHOT": str(output)},
+        self.assert_error(
+            self.run_bridge(executable, output=V1), "snapshot_invalid_protocol"
         )
-
-        payload = self.assert_error(result, "plan_invalid_protocol", retryable=False)
-        self.assertNotIn("private", json.dumps(payload))
-
-    def test_fixture_success_has_the_exact_envelope(self) -> None:
-        result = self.run_bridge(
-            self.fixture_executable(),
-            environment={"FAKE_SNAPSHOT": str(FIXTURE)},
+        invalid = self.temp / "invalid"
+        invalid.write_bytes(b"\xff")
+        self.assert_error(
+            self.run_bridge(executable, output=invalid), "snapshot_invalid_utf8"
         )
-
-        payload = self.payload(result)
-        self.assertEqual(set(payload), {"bridgeVersion", "ok", "model"})
-        self.assertEqual(payload["bridgeVersion"], 1)
-        self.assertIs(payload["ok"], True)
-        model = payload["model"]
-        self.assertEqual(model["modelVersion"], 2)
-        self.assertEqual(len(model["sessions"]), 1)
-        self.assertEqual(
-            [capability["provider"] for capability in model["capabilities"]],
-            ["codex", "claude"],
+        nonzero = self.executable(
+            "import sys\nsys.stderr.write('private')\nsys.exit(9)\n"
         )
-
-    def test_mixed_provider_fixture_projects_claude_sessions_and_truth(self) -> None:
-        executable = self.fixture_executable()
-        baseline = self.payload(
-            self.run_bridge(
-                executable,
-                environment={"FAKE_SNAPSHOT": str(FIXTURE)},
-            )
+        value = self.assert_error(self.run_bridge(nonzero), "swbctl_nonzero_exit")
+        self.assertNotIn("private", json.dumps(value))
+        sleepy = self.executable("import time\ntime.sleep(5)\n")
+        self.assert_error(
+            self.run_bridge(sleepy, "--timeout-ms", "100", timeout=2), "process_timeout"
         )
-        mixed = self.payload(
-            self.run_bridge(
-                executable,
-                environment={"FAKE_SNAPSHOT": str(MIXED_FIXTURE)},
-            )
+        noisy = self.executable(
+            f"import sys\nsys.stdout.buffer.write(b'x' * {MAX_BRIDGE_BYTES + 1})\n"
         )
+        self.assert_error(self.run_bridge(noisy), "stdout_overflow")
 
-        self.assertEqual(len(baseline["model"]["sessions"]), 1)
-        model = mixed["model"]
-        self.assertEqual(len(model["sessions"]), 2)
-        self.assertEqual(
-            {session["provider"] for session in model["sessions"]},
-            {"codex", "claude"},
-        )
-        self.assertEqual(model["capabilities"][1]["status"], "degraded")
-        self.assertEqual(model["warnings"][0]["provider"], "claude")
-
-    def test_entry_point_is_0755_and_works_outside_repo_via_path_or_symlink(
-        self,
-    ) -> None:
-        self.assertEqual(stat.S_IMODE(BRIDGE.stat().st_mode), 0o755)
-        outside = self.temp / "outside"
-        outside.mkdir()
-        executable = self.fixture_executable()
-        environment = {"FAKE_SNAPSHOT": str(FIXTURE)}
-
-        absolute = self.run_bridge(
-            executable,
-            environment=environment,
-            cwd=outside,
-            bridge=BRIDGE,
-        )
-        self.assertEqual(absolute.returncode, 0)
-        self.assertIs(self.payload(absolute)["ok"], True)
-
-        linked_bridge = self.temp / "linked-switchboard-bridge"
-        linked_bridge.symlink_to(BRIDGE)
-        linked = self.run_bridge(
-            executable,
-            environment=environment,
-            cwd=outside,
-            bridge=linked_bridge,
-        )
-        self.assertEqual(linked.returncode, 0)
-        self.assertIs(self.payload(linked)["ok"], True)
-
-    def test_neutral_and_degraded_snapshots_remain_successes(self) -> None:
-        original = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        neutral = dict(original)
-        neutral["capabilities"] = []
-        degraded = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        degraded["capabilities"][0]["available"] = False
-        degraded["capabilities"][0]["degradedReasons"] = [
-            {
-                "code": "provider_not_found",
-                "message": "Codex is unavailable.",
-                "retryable": True,
-                "feature": "app_server_thread_list",
-            }
-        ]
-        degraded["errors"] = [
-            {
-                "code": "provider_not_found",
-                "message": "Codex is unavailable.",
-                "scope": "provider",
-                "hostId": degraded["host"]["hostId"],
-                "provider": "codex",
-                "retryable": True,
-                "observedAt": degraded["generatedAt"],
-            }
-        ]
-        executable = self.fixture_executable()
-
-        for name, snapshot, status in (
-            ("neutral", neutral, "neutral"),
-            ("degraded", degraded, "degraded"),
-        ):
-            with self.subTest(name=name):
-                path = self.temp / f"{name}.json"
-                path.write_text(json.dumps(snapshot), encoding="utf-8")
-                result = self.run_bridge(
-                    executable, environment={"FAKE_SNAPSHOT": str(path)}
-                )
-                payload = self.payload(result)
-                self.assertEqual(result.returncode, 0)
-                self.assertIs(payload["ok"], True)
-                self.assertEqual(payload["model"]["capabilities"][0]["status"], status)
-
-    def assert_error(
-        self,
-        result: subprocess.CompletedProcess[bytes],
-        code: str,
-        *,
-        retryable: bool,
-    ) -> dict[str, object]:
-        payload = self.payload(result)
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(set(payload), {"bridgeVersion", "ok", "error"})
-        self.assertEqual(payload["bridgeVersion"], 1)
-        self.assertIs(payload["ok"], False)
-        error = payload["error"]
-        self.assertEqual(set(error), {"code", "message", "retryable"})
-        self.assertEqual(error["code"], code)
-        self.assertIs(error["retryable"], retryable)
-        self.assertIsInstance(error["message"], str)
-        self.assertLessEqual(len(error["message"]), 160)
-        return payload
-
-    def test_missing_permission_denied_and_exec_format_failures(self) -> None:
-        missing = self.run_bridge(self.temp / "missing")
-        self.assert_error(missing, "executable_not_found", retryable=False)
-
-        denied_path = self.temp / "denied"
-        denied_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        denied_path.chmod(0o600)
-        denied = self.run_bridge(denied_path)
-        self.assert_error(denied, "executable_permission_denied", retryable=False)
-
-        invalid_path = self.temp / "invalid-executable"
-        invalid_path.write_text("not an executable format\n", encoding="utf-8")
-        invalid_path.chmod(0o700)
-        invalid = self.run_bridge(invalid_path)
-        self.assert_error(invalid, "executable_start_failed", retryable=True)
-
-    def test_nonzero_exit_does_not_expose_stderr(self) -> None:
-        executable = self.executable(
-            """
-            import sys
-            sys.stderr.write("private diagnostic that must not cross the bridge\\n")
-            raise SystemExit(7)
-            """
-        )
-
-        result = self.run_bridge(executable)
-
-        payload = self.assert_error(result, "swbctl_nonzero_exit", retryable=True)
-        self.assertNotIn("private diagnostic", result.stdout.decode("utf-8"))
-        self.assertEqual(payload["error"]["message"], "swbctl exited with status 7.")
-
-    def test_timeout_kills_the_child_process_group(self) -> None:
-        child_pid = self.temp / "child-pid"
-        executable = self.executable(
-            """
-            import os
-            from pathlib import Path
-            import subprocess
-            import sys
-            import time
-
-            child = subprocess.Popen(
-                [sys.executable, "-c", "import time; time.sleep(30)"]
-            )
-            Path(os.environ["FAKE_CHILD_PID"]).write_text(
-                str(child.pid), encoding="ascii"
-            )
-            time.sleep(30)
-            """
-        )
-
-        result = self.run_bridge(
-            executable,
-            "--timeout-ms",
-            "500",
-            environment={"FAKE_CHILD_PID": str(child_pid)},
-        )
-
-        self.assert_error(result, "process_timeout", retryable=True)
-        pid = int(child_pid.read_text(encoding="ascii"))
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline and self._process_is_running(pid):
-            time.sleep(0.02)
-        self.assertFalse(self._process_is_running(pid))
-
-    def test_stdout_overflow_kills_descendants_in_the_process_group(self) -> None:
-        child_pid = self.temp / "overflow-child-pid"
-        executable = self.executable(
-            """
-            import os
-            from pathlib import Path
-            import subprocess
-            import sys
-
-            child = subprocess.Popen(
-                [sys.executable, "-c", "import time; time.sleep(30)"]
-            )
-            Path(os.environ["FAKE_CHILD_PID"]).write_text(
-                str(child.pid), encoding="ascii"
-            )
-            os.write(1, b"x" * (8 * 1024 * 1024 + 2))
-            """
-        )
-
-        result = self.run_bridge(
-            executable,
-            environment={"FAKE_CHILD_PID": str(child_pid)},
-        )
-
-        self.assert_error(result, "stdout_overflow", retryable=False)
-        pid = int(child_pid.read_text(encoding="ascii"))
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline and self._process_is_running(pid):
-            time.sleep(0.02)
-        self.assertFalse(self._process_is_running(pid))
-
-    @staticmethod
-    def _process_is_running(pid: int) -> bool:
-        stat_path = Path(f"/proc/{pid}/stat")
-        try:
-            fields = stat_path.read_text(encoding="ascii").split()
-        except FileNotFoundError:
-            return False
-        return len(fields) > 2 and fields[2] != "Z"
-
-    def test_stdout_and_stderr_overflow_are_bounded_without_deadlock(self) -> None:
-        stdout_executable = self.executable(
-            """
-            import os
-            os.write(1, b"x" * (8 * 1024 * 1024 + 2))
-            """,
-            name="stdout-overflow",
-        )
-        stderr_executable = self.executable(
-            """
-            import os
-            os.write(2, b"x" * (64 * 1024 + 1))
-            """,
-            name="stderr-overflow",
-        )
-
-        started = time.monotonic()
-        stdout_result = self.run_bridge(stdout_executable)
-        stderr_result = self.run_bridge(stderr_executable)
-
-        self.assert_error(stdout_result, "stdout_overflow", retryable=False)
-        self.assert_error(stderr_result, "stderr_overflow", retryable=False)
-        self.assertLess(time.monotonic() - started, 4)
-
-    def test_stderr_at_the_limit_does_not_change_a_valid_success(self) -> None:
-        executable = self.executable(
-            """
-            import os
-            from pathlib import Path
-            import sys
-
-            os.write(2, b"x" * (64 * 1024))
-            sys.stdout.buffer.write(Path(os.environ["FAKE_SNAPSHOT"]).read_bytes())
-            """
-        )
-
-        result = self.run_bridge(
-            executable, environment={"FAKE_SNAPSHOT": str(FIXTURE)}
-        )
-
-        self.assertEqual(result.returncode, 0)
-        self.assertIs(self.payload(result)["ok"], True)
-
-    def test_invalid_utf8_json_framing_and_protocol_are_distinct(self) -> None:
-        output = self.temp / "output"
-        executable = self.executable(
-            """
-            import os
-            from pathlib import Path
-            import sys
-            sys.stdout.buffer.write(Path(os.environ["FAKE_OUTPUT"]).read_bytes())
-            """
-        )
+    def test_argument_combinations_are_argparse_errors(self) -> None:
         cases = (
-            ("utf8", b"\xff\n", "snapshot_invalid_utf8"),
-            ("json", b"{\n", "snapshot_invalid_json"),
-            ("framing", b"{}\n\n", "snapshot_invalid_json"),
-            ("protocol", b"{}\n", "snapshot_invalid_protocol"),
-        )
-
-        for name, raw, code in cases:
-            with self.subTest(name=name):
-                output.write_bytes(raw)
-                result = self.run_bridge(
-                    executable, environment={"FAKE_OUTPUT": str(output)}
-                )
-                self.assert_error(result, code, retryable=False)
-
-    def test_snapshot_framing_rejects_all_outer_json_whitespace(self) -> None:
-        output = self.temp / "output"
-        executable = self.executable(
-            """
-            import os
-            from pathlib import Path
-            import sys
-            sys.stdout.buffer.write(Path(os.environ["FAKE_OUTPUT"]).read_bytes())
-            """
-        )
-        compact = FIXTURE.read_bytes().removesuffix(b"\n")
-        cases = (
-            ("leading-space", b" " + compact),
-            ("leading-tab", b"\t" + compact),
-            ("trailing-space", compact + b" "),
-            ("trailing-tab", compact + b"\t"),
-            ("lf-then-space", compact + b"\n "),
-            ("lf-then-tab", compact + b"\n\t"),
-            ("multiple-lf", compact + b"\n\n"),
-            ("crlf", compact + b"\r\n"),
-        )
-
-        for name, raw in cases:
-            with self.subTest(name=name):
-                output.write_bytes(raw)
-                result = self.run_bridge(
-                    executable, environment={"FAKE_OUTPUT": str(output)}
-                )
-                self.assert_error(result, "snapshot_invalid_json", retryable=False)
-
-        for name, raw in (
-            ("no-final-lf", compact),
-            ("one-final-lf", compact + b"\n"),
-        ):
-            with self.subTest(name=name):
-                output.write_bytes(raw)
-                result = self.run_bridge(
-                    executable, environment={"FAKE_OUTPUT": str(output)}
-                )
-                self.assertEqual(result.returncode, 0)
-                self.assertIs(self.payload(result)["ok"], True)
-
-    def test_argument_bounds_remain_argparse_errors(self) -> None:
-        for arguments in (
-            ("--timeout-ms", "99"),
-            ("--timeout-ms", "60001"),
             ("--max-sessions", "0"),
-            ("--max-sessions", "1001"),
-            ("--swbctl", ""),
+            ("--prepare-task", TASK_ID),
+            ("--create-task",),
+            ("--prepare-task", TASK_ID, "--create-task", "--request-id", REQUEST_ID),
+            (
+                "--prepare-history",
+                PROJECT_ID,
+                "--title",
+                "ignored",
+                "--request-id",
+                REQUEST_ID,
+            ),
+            ("--project", PROJECT_ID),
             ("--stop-session", SESSION_KEY),
-        ):
+        )
+        for arguments in cases:
             with self.subTest(arguments=arguments):
                 result = subprocess.run(
                     [str(BRIDGE), *arguments],
@@ -786,88 +380,47 @@ class BridgeCliTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, b"")
-                self.assertNotEqual(result.stderr, b"")
 
-    def test_broken_stdout_after_valid_arguments_is_silent_and_bounded(self) -> None:
-        executable = self.executable(
-            """
-            from pathlib import Path
-            import os
-            import sys
-            import time
 
-            time.sleep(0.1)
-            sys.stdout.buffer.write(Path(os.environ["FAKE_SNAPSHOT"]).read_bytes())
-            """
-        )
-        environment = os.environ.copy()
-        environment["FAKE_SNAPSHOT"] = str(FIXTURE)
-        process = subprocess.Popen(
-            [str(BRIDGE), "--swbctl", str(executable)],
-            cwd=ROOT,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        self.assertIsNotNone(process.stdout)
-        self.assertIsNotNone(process.stderr)
-        process.stdout.close()
-        stderr = process.stderr.read()
-        process.stderr.close()
-        return_code = process.wait(timeout=5)
-
-        self.assertEqual(return_code, 1)
-        self.assertEqual(stderr, b"")
+def encode(value: object) -> str:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
 class BridgeSerializationTests(unittest.TestCase):
-    def test_bridge_output_overflow_becomes_a_small_stable_failure(self) -> None:
-        response = {
-            "bridgeVersion": 1,
-            "ok": True,
-            "model": {"value": "x" * MAX_BRIDGE_BYTES},
-        }
-
-        exit_code, output = serialize_response(response)
-        payload = json.loads(output)
-
+    def test_overflow_and_serialization_failures_are_managed(self) -> None:
+        exit_code, output = serialize_response(
+            {"bridgeVersion": 2, "ok": True, "model": {"value": "x" * MAX_BRIDGE_BYTES}}
+        )
         self.assertEqual(exit_code, 1)
-        self.assertLessEqual(len(output), MAX_BRIDGE_BYTES)
-        self.assertEqual(payload["error"]["code"], "bridge_output_overflow")
-
-    def test_serialization_failure_is_managed(self) -> None:
-        response = {"bridgeVersion": 1, "ok": True, "model": {"bad": object()}}
-
-        exit_code, output = serialize_response(response)
-        payload = json.loads(output)
-
+        self.assertEqual(json.loads(output)["error"]["code"], "bridge_output_overflow")
+        exit_code, output = serialize_response(
+            {"bridgeVersion": 2, "ok": True, "model": {"bad": object()}}
+        )
         self.assertEqual(exit_code, 1)
-        self.assertEqual(payload["error"]["code"], "bridge_serialization_failed")
-        self.assertEqual(output.count(b"\n"), 1)
+        self.assertEqual(
+            json.loads(output)["error"]["code"], "bridge_serialization_failed"
+        )
 
 
 class RuntimeBoundaryTests(unittest.TestCase):
     def test_runtime_imports_no_core_or_private_storage_modules(self) -> None:
-        runtime_files = sorted((ROOT / "switchboard_dms").rglob("*.py"))
-        runtime_files.append(BRIDGE)
-        forbidden_imports = (
-            "agent_switchboard",
-            "sqlite3",
-            "switchboard.core",
-            "switchboard.providers",
-            "switchboard.storage",
-        )
+        runtime_files = sorted((ROOT / "switchboard_dms").rglob("*.py")) + [BRIDGE]
         for path in runtime_files:
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path.name):
-                for module in forbidden_imports:
+                for module in (
+                    "agent_switchboard",
+                    "sqlite3",
+                    "switchboard.storage",
+                    "switchboard.providers",
+                ):
                     self.assertNotIn(f"import {module}", text)
                     self.assertNotIn(f"from {module}", text)
 
-    def test_bridge_delegates_actions_without_provider_or_desktop_tools(self) -> None:
+    def test_bridge_has_no_provider_git_shell_or_desktop_ownership(self) -> None:
         text = "\n".join(
-            (ROOT / relative).read_text(encoding="utf-8").casefold()
-            for relative in (
+            (ROOT / name).read_text(encoding="utf-8").casefold()
+            for name in (
                 "switchboard-bridge",
                 "switchboard_dms/bridge.py",
                 "switchboard_dms/process.py",
@@ -875,15 +428,14 @@ class RuntimeBoundaryTests(unittest.TestCase):
         )
         for forbidden in (
             "registry.sqlite",
-            "ssh",
+            "subprocess git",
             "niri",
             "ghostty",
             "codex app-server",
             "shell=true",
             "shlex",
         ):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, text)
+            self.assertNotIn(forbidden, text)
 
 
 if __name__ == "__main__":

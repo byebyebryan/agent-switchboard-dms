@@ -21,14 +21,14 @@ from .protocol import (
     parse_snapshot,
 )
 
-BRIDGE_VERSION = 1
+BRIDGE_VERSION = 2
 DEFAULT_TIMEOUT_MS = 10_000
 MIN_TIMEOUT_MS = 100
 MAX_TIMEOUT_MS = 60_000
 DEFAULT_MAX_SESSIONS = MAX_MODEL_SESSIONS
 MAX_BRIDGE_BYTES = MAX_JSON_BYTES
 _INTERNAL_ERROR_PAYLOAD = (
-    b'{"bridgeVersion":1,"error":{"code":"bridge_internal_error",'
+    b'{"bridgeVersion":2,"error":{"code":"bridge_internal_error",'
     b'"message":"The bridge encountered an internal error.",'
     b'"retryable":false},"ok":false}\n'
 )
@@ -77,28 +77,46 @@ def prepare_open_argv(
     return argv
 
 
-def prepare_new_argv(
+def prepare_task_argv(
     executable: str,
     *,
-    project_id: str,
-    location_id: str,
-    provider: str,
+    task_id: str,
     request_id: str,
+    create: bool = False,
+    project_id: str | None = None,
+    title: str | None = None,
+    checkout_id: str | None = None,
+    provider: str | None = None,
     can_focus_desktop: bool = True,
     can_launch_terminal: bool = True,
 ) -> list[str]:
     argv = [
         executable,
-        "prepare-new",
-        "--project",
-        project_id,
-        "--location",
-        location_id,
-        "--provider",
-        provider,
-        "--request-id",
-        request_id,
+        "prepare-task",
+        task_id,
     ]
+    if create:
+        assert project_id is not None and title is not None and provider is not None
+        argv.extend(
+            [
+                "--create",
+                "--project",
+                project_id,
+                "--title",
+                title,
+            ]
+        )
+        if checkout_id is not None:
+            argv.extend(["--checkout", checkout_id])
+        argv.extend(["--provider", provider])
+    elif provider is not None:
+        argv.extend(["--provider", provider])
+    argv.extend(
+        [
+            "--request-id",
+            request_id,
+        ]
+    )
     if can_focus_desktop:
         argv.append("--can-focus-desktop")
     if can_launch_terminal:
@@ -111,7 +129,7 @@ def prepare_history_argv(
     executable: str,
     *,
     project_id: str,
-    location_id: str,
+    checkout_id: str | None,
     request_id: str,
     can_focus_desktop: bool = True,
     can_launch_terminal: bool = True,
@@ -121,11 +139,10 @@ def prepare_history_argv(
         "prepare-history",
         "--project",
         project_id,
-        "--location",
-        location_id,
-        "--request-id",
-        request_id,
     ]
+    if checkout_id is not None:
+        argv.extend(["--checkout", checkout_id])
+    argv.extend(["--request-id", request_id])
     if can_focus_desktop:
         argv.append("--can-focus-desktop")
     if can_launch_terminal:
@@ -228,9 +245,12 @@ def run_bridge(
     timeout_ms: int,
     max_sessions: int,
     prepare_open: str | None = None,
-    prepare_new: str | None = None,
+    prepare_task: str | None = None,
+    create_task: bool = False,
     prepare_history: str | None = None,
-    location_id: str | None = None,
+    project_id: str | None = None,
+    task_title: str | None = None,
+    checkout_id: str | None = None,
     provider: str | None = None,
     request_id: str | None = None,
     prepare_can_focus_desktop: bool = True,
@@ -242,7 +262,7 @@ def run_bridge(
     try:
         if any(
             target is not None
-            for target in (prepare_open, prepare_new, prepare_history)
+            for target in (prepare_open, prepare_task, prepare_history)
         ):
             assert request_id is not None
             if prepare_open is not None:
@@ -253,23 +273,25 @@ def run_bridge(
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
                 )
-            elif prepare_new is not None:
-                assert location_id is not None and provider is not None
-                argv = prepare_new_argv(
+            elif prepare_task is not None:
+                argv = prepare_task_argv(
                     executable,
-                    project_id=prepare_new,
-                    location_id=location_id,
+                    task_id=prepare_task,
+                    create=create_task,
+                    project_id=project_id,
+                    title=task_title,
+                    checkout_id=checkout_id,
                     provider=provider,
                     request_id=request_id,
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
                 )
             else:
-                assert prepare_history is not None and location_id is not None
+                assert prepare_history is not None
                 argv = prepare_history_argv(
                     executable,
                     project_id=prepare_history,
-                    location_id=location_id,
+                    checkout_id=checkout_id,
                     request_id=request_id,
                     can_focus_desktop=prepare_can_focus_desktop,
                     can_launch_terminal=prepare_can_launch_terminal,
@@ -293,7 +315,7 @@ def run_bridge(
                 return _failure(
                     BridgeError(
                         "plan_invalid_protocol",
-                        "swbctl stdout was not a compatible PresentationPlan v1 document.",
+                        "swbctl stdout was not a compatible PresentationPlan v2 document.",
                         False,
                     )
                 )
@@ -395,7 +417,7 @@ def run_bridge(
             return _failure(
                 BridgeError(
                     "snapshot_invalid_protocol",
-                    "swbctl stdout was not a compatible Snapshot v1 document.",
+                    "swbctl stdout was not a compatible Snapshot v2 document.",
                     False,
                 )
             )
@@ -509,6 +531,17 @@ def _tmux_client(value: str) -> str:
     return value
 
 
+def _task_title(value: str) -> str:
+    normalized = " ".join(value.split())
+    if (
+        not normalized
+        or len(normalized) > 256
+        or any(unicodedata.category(character) == "Cc" for character in value)
+    ):
+        raise argparse.ArgumentTypeError("expected a nonempty bounded task title")
+    return normalized
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="switchboard-bridge",
@@ -518,11 +551,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh", action="store_true")
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--prepare-open", type=_session_key)
-    actions.add_argument("--prepare-new", type=_uuid)
+    actions.add_argument("--prepare-task", type=_uuid)
     actions.add_argument("--prepare-history", type=_uuid)
     actions.add_argument("--select-surface", type=_uuid)
     actions.add_argument("--stop-session", type=_claude_session_key)
-    parser.add_argument("--location", type=_uuid)
+    parser.add_argument("--create-task", action="store_true")
+    parser.add_argument("--project", type=_uuid)
+    parser.add_argument("--title", type=_task_title)
+    parser.add_argument("--checkout", type=_uuid)
     parser.add_argument("--provider", choices=("codex", "claude"))
     parser.add_argument("--request-id", type=_uuid)
     parser.add_argument("--tmux-client", type=_tmux_client)
@@ -568,26 +604,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     preparing = any(
         target is not None
-        for target in (args.prepare_open, args.prepare_new, args.prepare_history)
+        for target in (args.prepare_open, args.prepare_task, args.prepare_history)
     )
     if preparing != (args.request_id is not None):
         parser.error("a prepare action and --request-id must be supplied together")
-    if args.prepare_new is not None and (
-        args.location is None or args.provider is None
+    if args.create_task and args.prepare_task is None:
+        parser.error("--create-task requires --prepare-task")
+    if args.create_task and (
+        args.project is None or args.title is None or args.provider is None
     ):
-        parser.error(
-            "--prepare-new, --location, and --provider must be supplied together"
-        )
-    if args.prepare_history is not None and args.location is None:
-        parser.error("--prepare-history and --location must be supplied together")
+        parser.error("--create-task requires --project, --title, and --provider")
     if args.prepare_history is not None and args.provider is not None:
         parser.error("--provider does not apply to --prepare-history")
-    if (
-        args.prepare_new is None
-        and args.prepare_history is None
-        and (args.location is not None or args.provider is not None)
+    if args.prepare_history is not None and (
+        args.project is not None or args.title is not None
     ):
-        parser.error("--location and --provider require a project prepare action")
+        parser.error("--prepare-history accepts only optional --checkout context")
+    if (
+        not args.create_task
+        and args.prepare_history is None
+        and (
+            args.project is not None
+            or args.title is not None
+            or args.checkout is not None
+        )
+    ):
+        parser.error(
+            "--project, --title, and --checkout require a create or history action"
+        )
+    if args.prepare_task is None and args.provider is not None:
+        parser.error("--provider requires --prepare-task")
     if (args.select_surface is None) != (args.tmux_client is None):
         parser.error("--select-surface and --tmux-client must be supplied together")
     if (
@@ -601,9 +647,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout_ms=args.timeout_ms,
             max_sessions=args.max_sessions,
             prepare_open=args.prepare_open,
-            prepare_new=args.prepare_new,
+            prepare_task=args.prepare_task,
+            create_task=args.create_task,
             prepare_history=args.prepare_history,
-            location_id=args.location,
+            project_id=args.project,
+            task_title=args.title,
+            checkout_id=args.checkout,
             provider=args.provider,
             request_id=args.request_id,
             select_surface=args.select_surface,

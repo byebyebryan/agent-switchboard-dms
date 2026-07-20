@@ -21,7 +21,7 @@ from .bridge import (
 )
 from .process import ProcessRunError, ProcessOutput, run_process
 
-ACTION_VERSION = 1
+ACTION_VERSION = 2
 MAX_ACTION_BYTES = 16 * 1024
 MAX_DESKTOP_TOKEN_LENGTH = 2048
 MAX_WINDOW_HOST_LENGTH = 256
@@ -241,8 +241,11 @@ def _prepared_plan(
     *,
     swbctl: str,
     session_key: str | None,
+    task_id: str | None,
+    create_task: bool,
     project_id: str | None,
-    location_id: str | None,
+    title: str | None,
+    checkout_id: str | None,
     provider: str | None,
     history: bool,
     request_id: str,
@@ -255,9 +258,12 @@ def _prepared_plan(
         timeout_ms=timeout_ms,
         max_sessions=DEFAULT_MAX_SESSIONS,
         prepare_open=session_key,
-        prepare_new=(project_id if not history else None),
+        prepare_task=task_id,
+        create_task=create_task,
         prepare_history=(project_id if history else None),
-        location_id=location_id,
+        project_id=(project_id if create_task else None),
+        task_title=title,
+        checkout_id=checkout_id,
         provider=provider,
         request_id=request_id,
         prepare_can_focus_desktop=can_focus_desktop,
@@ -318,8 +324,11 @@ def _open_target(
     swbctl: str,
     terminal: str,
     session_key: str | None,
+    task_id: str | None,
+    create_task: bool,
     project_id: str | None,
-    location_id: str | None,
+    title: str | None,
+    checkout_id: str | None,
     provider: str | None,
     history: bool,
     window_host: str,
@@ -330,21 +339,25 @@ def _open_target(
 ) -> dict[str, object]:
     """Prepare and execute one validated local presentation target."""
 
-    if (session_key is None) == (project_id is None):
-        raise ValueError("exactly one session or project target is required")
-    if session_key is not None and history:
-        raise ValueError("session targets cannot open project history")
-    if project_id is not None and location_id is None:
-        raise ValueError("project targets require a location")
-    if project_id is not None and ((provider is None) == (not history)):
-        raise ValueError("new targets require a provider and history targets do not")
+    target_count = sum((session_key is not None, task_id is not None, history))
+    if target_count != 1:
+        raise ValueError("exactly one session, task, or history target is required")
+    if create_task and (
+        task_id is None or project_id is None or title is None or provider is None
+    ):
+        raise ValueError("new task targets require project, title, and provider")
+    if history and (project_id is None or provider is not None):
+        raise ValueError("history targets require only project and optional checkout")
 
     request = request_id or str(uuid.uuid4())
     plan = _prepared_plan(
         swbctl=swbctl,
         session_key=session_key,
+        task_id=task_id,
+        create_task=create_task,
         project_id=project_id,
-        location_id=location_id,
+        title=title,
+        checkout_id=checkout_id,
         provider=provider,
         history=history,
         request_id=request,
@@ -404,8 +417,11 @@ def _open_target(
     fallback = _prepared_plan(
         swbctl=swbctl,
         session_key=session_key,
+        task_id=task_id,
+        create_task=create_task,
         project_id=project_id,
-        location_id=location_id,
+        title=title,
+        checkout_id=checkout_id,
         provider=provider,
         history=history,
         request_id=request,
@@ -444,8 +460,11 @@ def open_session(
         swbctl=swbctl,
         terminal=terminal,
         session_key=session_key,
+        task_id=None,
+        create_task=False,
         project_id=None,
-        location_id=None,
+        title=None,
+        checkout_id=None,
         provider=None,
         history=False,
         window_host=window_host,
@@ -456,27 +475,33 @@ def open_session(
     )
 
 
-def open_project(
+def open_task(
     *,
     swbctl: str,
     terminal: str,
-    project_id: str,
-    location_id: str,
-    provider: str,
+    task_id: str,
     window_host: str,
     timeout_ms: int,
+    provider: str | None = None,
+    create: bool = False,
+    project_id: str | None = None,
+    title: str | None = None,
+    checkout_id: str | None = None,
     request_id: str | None = None,
     which: Callable[[str], str | None] = shutil.which,
     launcher: DetachedLauncher = launch_detached,
 ) -> dict[str, object]:
-    """Prepare and execute one new local provider project-session action."""
+    """Prepare and execute one existing or atomically-created task action."""
 
     return _open_target(
         swbctl=swbctl,
         terminal=terminal,
         session_key=None,
+        task_id=task_id,
+        create_task=create,
         project_id=project_id,
-        location_id=location_id,
+        title=title,
+        checkout_id=checkout_id,
         provider=provider,
         history=False,
         window_host=window_host,
@@ -492,7 +517,7 @@ def open_history(
     swbctl: str,
     terminal: str,
     project_id: str,
-    location_id: str,
+    checkout_id: str | None,
     window_host: str,
     timeout_ms: int,
     request_id: str | None = None,
@@ -505,8 +530,11 @@ def open_history(
         swbctl=swbctl,
         terminal=terminal,
         session_key=None,
+        task_id=None,
+        create_task=False,
         project_id=project_id,
-        location_id=location_id,
+        title=None,
+        checkout_id=checkout_id,
         provider=None,
         history=True,
         window_host=window_host,
@@ -651,6 +679,17 @@ def _claude_session_key(value: str) -> str:
     return parsed
 
 
+def _task_title(value: str) -> str:
+    normalized = " ".join(value.split())
+    if (
+        not normalized
+        or len(normalized) > 256
+        or any(unicodedata.category(character) == "Cc" for character in value)
+    ):
+        raise argparse.ArgumentTypeError("expected a nonempty bounded task title")
+    return normalized
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="switchboard-open",
@@ -664,8 +703,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TIMEOUT_MS,
         type=_bounded_integer("--timeout-ms", MIN_TIMEOUT_MS, MAX_TIMEOUT_MS),
     )
+    parser.add_argument("--task", type=_uuid)
+    parser.add_argument("--create", action="store_true")
     parser.add_argument("--project", type=_uuid)
-    parser.add_argument("--location", type=_uuid)
+    parser.add_argument("--title", type=_task_title)
+    parser.add_argument("--checkout", type=_uuid)
     parser.add_argument("--provider", choices=("codex", "claude"))
     parser.add_argument("--history", action="store_true")
     parser.add_argument("--stop", dest="stop_session", type=_claude_session_key)
@@ -676,20 +718,29 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    project_arguments = (args.project, args.location, args.provider)
+    create_arguments = (args.project, args.title, args.provider)
     if args.history:
-        if args.project is None or args.location is None or args.provider is not None:
-            parser.error(
-                "--history requires --project and --location without --provider"
-            )
-    elif any(value is not None for value in project_arguments) and not all(
-        value is not None for value in project_arguments
+        if (
+            args.project is None
+            or args.task is not None
+            or args.title is not None
+            or args.provider is not None
+            or args.create
+        ):
+            parser.error("--history requires --project and optional --checkout only")
+    elif args.create and not all(value is not None for value in create_arguments):
+        parser.error("--create requires --project, --title, and --provider")
+    elif not args.create and any(
+        value is not None for value in (args.project, args.title, args.checkout)
     ):
-        parser.error("--project, --location, and --provider must be supplied together")
+        parser.error("--project, --title, and --checkout require --create or --history")
+    if args.provider is not None and args.task is None and not args.create:
+        parser.error("--provider requires --task")
     target_count = sum(
         (
             args.session_key is not None,
-            args.project is not None,
+            args.task is not None or args.create,
+            args.history,
             args.stop_session is not None,
         )
     )
@@ -711,27 +762,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout_ms=args.timeout_ms,
             )
         elif args.history:
-            assert isinstance(args.project, str) and isinstance(args.location, str)
+            assert isinstance(args.project, str)
             action = open_history(
                 swbctl=args.swbctl,
                 terminal=args.terminal,
                 project_id=args.project,
-                location_id=args.location,
+                checkout_id=args.checkout,
                 window_host=args.window_host,
                 timeout_ms=args.timeout_ms,
             )
         else:
-            assert (
-                isinstance(args.project, str)
-                and isinstance(args.location, str)
-                and isinstance(args.provider, str)
-            )
-            action = open_project(
+            task_id = args.task if isinstance(args.task, str) else str(uuid.uuid4())
+            action = open_task(
                 swbctl=args.swbctl,
                 terminal=args.terminal,
-                project_id=args.project,
-                location_id=args.location,
+                task_id=task_id,
                 provider=args.provider,
+                create=args.create,
+                project_id=args.project,
+                title=args.title,
+                checkout_id=args.checkout,
                 window_host=args.window_host,
                 timeout_ms=args.timeout_ms,
             )

@@ -1,7 +1,8 @@
-"""Bounded Snapshot v1 validation and DMS-facing projection.
+"""Bounded Snapshot v2 validation and DMS-facing model v3 projection.
 
-This module deliberately duplicates only the public JSON contract.  It never
-imports Agent Switchboard or reads its private registry.
+This module deliberately duplicates only Agent Switchboard's public JSON
+contract.  It never imports core internals, reads the registry, invokes Git, or
+parses provider-owned data.
 """
 
 from __future__ import annotations
@@ -12,11 +13,13 @@ import re
 import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 from uuid import UUID
 
-SCHEMA_VERSION = 1
-PROTOCOL_VERSION = 1
+SCHEMA_VERSION = 2
+PROTOCOL_VERSION = 2
+MODEL_VERSION = 3
+
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_JSON_DEPTH = 32
 MAX_JSON_STRING_LENGTH = 64 * 1024
@@ -24,24 +27,20 @@ MAX_JSON_ARRAY_ITEMS = 100_000
 MAX_JSON_OBJECT_KEYS = 256
 MAX_SNAPSHOT_RECORDS = 100_000
 MAX_MODEL_SESSIONS = 1_000
-MAX_MODEL_SESSION_BYTES = 4 * 1024 * 1024
-MAX_MODEL_LAUNCH_TARGETS = 1_000
-MAX_MODEL_LAUNCH_TARGET_BYTES = 1024 * 1024
-MAX_MODEL_FEATURES = 64
-MAX_MODEL_FEATURE_BYTES = 64 * 1024
-MAX_MODEL_DEGRADED_REASONS = 64
-MAX_MODEL_DEGRADED_REASON_BYTES = 512 * 1024
-MAX_MODEL_ERRORS = 128
+MAX_MODEL_TASKS = 1_000
+MAX_MODEL_PROJECTS = 1_000
+MAX_MODEL_BYTES = 4 * 1024 * 1024
+MAX_MODEL_PROJECT_BYTES = 512 * 1024
+MAX_MODEL_TASK_BYTES = 1280 * 1024
+MAX_MODEL_INBOX_BYTES = 768 * 1024
+MAX_MODEL_WARNING_BYTES = 512 * 1024
 MAX_MODEL_WARNINGS = 256
-MAX_MODEL_WARNING_BYTES = 1024 * 1024
-_MODEL_DIAGNOSTICS_MESSAGE = "The frontend model omitted diagnostics to remain bounded."
-_MODEL_SESSIONS_MESSAGE = "The frontend model omitted sessions to remain bounded."
-_MODEL_LAUNCH_TARGETS_MESSAGE = (
-    "The frontend model omitted launch targets to remain bounded."
-)
 
 _PROVIDERS = frozenset({"codex", "claude"})
 _TRANSPORTS = frozenset({"tmux"})
+_REPOSITORY_KINDS = frozenset({"git", "directory"})
+_CHECKOUT_KINDS = frozenset({"main", "worktree", "directory"})
+_TASK_STATUSES = frozenset({"open", "closed"})
 _RUNTIME_PRESENCE = frozenset({"live", "stopped", "unknown"})
 _RESUMABILITY = frozenset({"resumable", "missing", "unknown"})
 _ACTIVITY = frozenset({"working", "needs_input", "ready", "completed", "unknown"})
@@ -66,6 +65,7 @@ _ERROR_SCOPES = frozenset(
 _PRESENTATION_PLAN_KINDS = frozenset({"focus", "switch", "attach", "blocked"})
 _SESSION_ACTION_STATUSES = frozenset({"stopped", "already_stopped", "blocked"})
 
+_KEY_NORMALIZER = re.compile(r"[^a-z0-9]")
 _SENSITIVE_KEY_PARTS = (
     "accesskey",
     "apikey",
@@ -80,6 +80,7 @@ _SENSITIVE_KEY_PARTS = (
     "password",
     "passphrase",
     "privatekey",
+    "prompt",
     "refreshtoken",
     "accesstoken",
     "authtoken",
@@ -88,56 +89,48 @@ _SENSITIVE_KEY_PARTS = (
 )
 _SENSITIVE_KEYS = frozenset(
     {
-        "argv",
         "body",
         "content",
         "conversation",
-        "conversationhistory",
-        "cookie",
-        "environment",
+        "absolutegitdir",
+        "gitadministrativedir",
+        "gitcommondir",
         "hookpayload",
         "messages",
         "modeloutput",
         "output",
         "payload",
         "prompt",
-        "prompts",
-        "prompttext",
-        "providerargv",
         "providerpayload",
         "rawpayload",
-        "rawprompt",
         "requestpayload",
         "responsepayload",
-        "secret",
-        "secrets",
-        "setcookie",
         "stderr",
         "stdin",
         "stdout",
         "systemprompt",
         "tooloutput",
         "transcript",
-        "transcriptbody",
-        "transcripts",
         "userprompt",
+        "worktreeadmindir",
     }
 )
-_KEY_NORMALIZER = re.compile(r"[^a-z0-9]")
-_DETAIL_STRING_FIELDS = frozenset({"capability", "fallback"})
-_DETAIL_INTEGER_FIELDS = frozenset({"emittedCount", "retainedCount"})
-_DETAIL_NUMBER_FIELDS = frozenset({"latency"})
-_DETAIL_HASH_FIELDS = frozenset({"payloadHash"})
-_DETAIL_FIELDS = (
-    _DETAIL_STRING_FIELDS
-    | _DETAIL_INTEGER_FIELDS
-    | _DETAIL_NUMBER_FIELDS
-    | _DETAIL_HASH_FIELDS
+_SAFE_DETAIL_FIELDS = frozenset(
+    {
+        "capability",
+        "emittedCount",
+        "fallback",
+        "latency",
+        "payloadHash",
+        "projectId",
+        "repositoryId",
+        "retainedCount",
+    }
 )
 
 
 class ProtocolError(ValueError):
-    """A Snapshot v1 document is malformed, unsafe, or incompatible."""
+    """A public Switchboard document is malformed, unsafe, or incompatible."""
 
 
 def _reject_constant(value: str) -> None:
@@ -145,8 +138,7 @@ def _reject_constant(value: str) -> None:
 
 
 def _normalized_key(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    return _KEY_NORMALIZER.sub("", normalized)
+    return _KEY_NORMALIZER.sub("", unicodedata.normalize("NFKC", value).casefold())
 
 
 def _reject_sensitive_key(value: str, path: str) -> None:
@@ -158,85 +150,79 @@ def _reject_sensitive_key(value: str, path: str) -> None:
     if normalized in _SENSITIVE_KEYS or any(
         part in normalized for part in _SENSITIVE_KEY_PARTS
     ):
-        raise ProtocolError(f"{path} contains forbidden sensitive field {value!r}")
+        raise ProtocolError(f"{path} contains sensitive field {value!r}")
     if "prompt" in normalized or "transcript" in normalized:
-        raise ProtocolError(f"{path} contains forbidden content field {value!r}")
+        raise ProtocolError(f"{path} contains sensitive field {value!r}")
     if any(
         part in normalized
         for part in ("conversation", "messages", "output", "response", "result")
     ):
-        raise ProtocolError(f"{path} contains forbidden content field {value!r}")
+        raise ProtocolError(f"{path} contains sensitive field {value!r}")
     if normalized.startswith("raw"):
-        raise ProtocolError(f"{path} contains forbidden raw field {value!r}")
+        raise ProtocolError(f"{path} contains sensitive field {value!r}")
     if "payload" in normalized and not normalized.endswith("payloadhash"):
-        raise ProtocolError(f"{path} contains forbidden payload field {value!r}")
+        raise ProtocolError(f"{path} contains sensitive field {value!r}")
     if "token" in normalized and normalized != "desktoptoken":
-        raise ProtocolError(f"{path} contains forbidden token field {value!r}")
+        raise ProtocolError(f"{path} contains sensitive field {value!r}")
 
 
-def _validate_json_tree(
-    value: object, path: str = "envelope", *, depth: int = 0
-) -> None:
+def _validate_json_tree(value: object, path: str = "envelope", depth: int = 0) -> None:
     if depth > MAX_JSON_DEPTH:
-        raise ProtocolError(f"{path} exceeds maximum JSON nesting depth")
-    if value is None or isinstance(value, bool) or isinstance(value, int):
+        raise ProtocolError(f"{path} exceeds the JSON depth limit")
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if value < 0 or value > 2**63 - 1:
+            raise ProtocolError(f"{path} integer is outside the supported range")
         return
     if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ProtocolError(f"{path} contains a non-finite number")
+        if not math.isfinite(value) or value < 0:
+            raise ProtocolError(f"{path} number is outside the supported range")
         return
     if isinstance(value, str):
         if len(value) > MAX_JSON_STRING_LENGTH:
-            raise ProtocolError(f"{path} contains an oversized string")
-        if any(unicodedata.category(character) == "Cc" for character in value):
+            raise ProtocolError(f"{path} string exceeds the supported limit")
+        controls = [char for char in value if unicodedata.category(char) == "Cc"]
+        if controls and not (
+            path.endswith(".purpose") and all(char in "\n\t" for char in controls)
+        ):
             raise ProtocolError(f"{path} contains terminal control characters")
         return
     if isinstance(value, list):
         if len(value) > MAX_JSON_ARRAY_ITEMS:
             raise ProtocolError(f"{path} contains too many array items")
         for index, item in enumerate(value):
-            _validate_json_tree(item, f"{path}[{index}]", depth=depth + 1)
+            _validate_json_tree(item, f"{path}[{index}]", depth + 1)
         return
-    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+    if isinstance(value, dict):
         if len(value) > MAX_JSON_OBJECT_KEYS:
             raise ProtocolError(f"{path} contains too many object keys")
         for key, item in value.items():
+            if not isinstance(key, str):
+                raise ProtocolError(f"{path} contains a non-string key")
             _reject_sensitive_key(key, path)
-            _validate_json_tree(item, f"{path}.{key}", depth=depth + 1)
+            _validate_json_tree(item, f"{path}.{key}", depth + 1)
         return
-    raise ProtocolError(f"{path} contains a non-JSON value")
+    raise ProtocolError(f"{path} contains unsupported JSON data")
 
 
 def _decode(raw: str | bytes | bytearray) -> dict[str, Any]:
-    if isinstance(raw, str):
-        try:
-            size = len(raw.encode("utf-8"))
-        except UnicodeEncodeError as error:
-            raise ProtocolError("snapshot must be UTF-8 JSON") from error
-    elif isinstance(raw, (bytes, bytearray)):
-        size = len(raw)
-    else:
-        raise ProtocolError("snapshot must be UTF-8 JSON")
+    try:
+        size = len(raw.encode("utf-8")) if isinstance(raw, str) else len(raw)
+    except (AttributeError, UnicodeEncodeError) as exc:
+        raise ProtocolError("protocol message must be UTF-8 JSON") from exc
     if size > MAX_JSON_BYTES:
-        raise ProtocolError(f"snapshot exceeds the {MAX_JSON_BYTES}-byte limit")
+        raise ProtocolError(f"protocol message exceeds the {MAX_JSON_BYTES}-byte limit")
     try:
         value = json.loads(raw, parse_constant=_reject_constant)
-    except ProtocolError:
-        raise
-    except (
-        json.JSONDecodeError,
-        TypeError,
-        UnicodeDecodeError,
-        ValueError,
-        RecursionError,
-    ) as error:
-        raise ProtocolError(f"invalid JSON: {error}") from error
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as exc:
+        raise ProtocolError(f"invalid JSON: {exc}") from exc
     _validate_json_tree(value)
     return _object(value, "envelope")
 
 
 def _object(value: object, path: str) -> dict[str, Any]:
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict):
         raise ProtocolError(f"{path} must be an object")
     return value
 
@@ -259,9 +245,7 @@ def _required(table: dict[str, Any], key: str, path: str) -> Any:
 
 def _string(value: object, path: str, *, maximum: int = 4096) -> str:
     if not isinstance(value, str) or not value or len(value) > maximum:
-        raise ProtocolError(f"{path} must be a non-empty bounded string")
-    if any(unicodedata.category(character) == "Cc" for character in value):
-        raise ProtocolError(f"{path} contains terminal control characters")
+        raise ProtocolError(f"{path} must be a nonempty bounded string")
     return value
 
 
@@ -269,38 +253,36 @@ def _optional_string(
     table: dict[str, Any], key: str, path: str, *, maximum: int
 ) -> str | None:
     value = table.get(key)
-    return None if value is None else _string(value, f"{path}.{key}", maximum=maximum)
+    if value is None:
+        return None
+    return _string(value, f"{path}.{key}", maximum=maximum)
 
 
 def _integer(value: object, path: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ProtocolError(f"{path} must be a non-negative integer")
+        raise ProtocolError(f"{path} must be a nonnegative integer")
     return value
 
 
 def _boolean(value: object, path: str) -> bool:
     if not isinstance(value, bool):
-        raise ProtocolError(f"{path} must be boolean")
+        raise ProtocolError(f"{path} must be a boolean")
     return value
 
 
 def _enum(value: object, path: str, allowed: frozenset[str]) -> str:
-    text = _string(value, path, maximum=128)
-    if text not in allowed:
-        raise ProtocolError(f"{path} has unsupported value {text!r}")
-    return text
-
-
-def _provider(value: object, path: str) -> str:
-    return _enum(value, path, _PROVIDERS)
+    result = _string(value, path, maximum=64)
+    if result not in allowed:
+        raise ProtocolError(f"{path} contains an unsupported value")
+    return result
 
 
 def _uuid(value: object, path: str) -> str:
     text = _string(value, path, maximum=64)
     try:
         parsed = UUID(text)
-    except ValueError as error:
-        raise ProtocolError(f"{path} must be a UUID") from error
+    except ValueError as exc:
+        raise ProtocolError(f"{path} must be a UUID") from exc
     if parsed.int == 0:
         raise ProtocolError(f"{path} must not be a nil UUID")
     return str(parsed)
@@ -311,68 +293,74 @@ def _optional_uuid(table: dict[str, Any], key: str, path: str) -> str | None:
     return None if value is None else _uuid(value, f"{path}.{key}")
 
 
+def _provider(value: object, path: str) -> str:
+    return _enum(value, path, _PROVIDERS)
+
+
 def _session_key(value: object, path: str) -> tuple[str, str, str, str]:
-    text = _string(value, path, maximum=512)
+    text = _string(value, path, maximum=256)
     parts = text.split(":")
     if len(parts) != 3:
-        raise ProtocolError(f"{path} must contain host, provider, and UUID")
-    host_id = _uuid(parts[0], f"{path}.host")
+        raise ProtocolError(f"{path} must be a canonical session key")
+    host_id = _uuid(parts[0], f"{path}.hostId")
     provider = _provider(parts[1], f"{path}.provider")
-    provider_session_id = _uuid(parts[2], f"{path}.providerSessionId")
-    canonical = f"{host_id}:{provider}:{provider_session_id}"
-    return canonical, host_id, provider, provider_session_id
+    provider_id = _uuid(parts[2], f"{path}.providerSessionId")
+    return f"{host_id}:{provider}:{provider_id}", host_id, provider, provider_id
 
 
-def _hash(value: object, path: str) -> str:
-    text = _string(value, path, maximum=64)
-    if len(text) != 64 or any(
-        character not in "0123456789abcdef" for character in text
-    ):
-        raise ProtocolError(f"{path} must be a lowercase SHA-256 digest")
-    return text
+def _versions(table: dict[str, Any]) -> None:
+    schema = _integer(
+        _required(table, "schemaVersion", "envelope"), "envelope.schemaVersion"
+    )
+    protocol = _integer(
+        _required(table, "protocolVersion", "envelope"), "envelope.protocolVersion"
+    )
+    if schema != SCHEMA_VERSION:
+        raise ProtocolError(
+            f"schema version {schema} is not supported; expected {SCHEMA_VERSION}"
+        )
+    if protocol != PROTOCOL_VERSION:
+        raise ProtocolError(
+            f"protocol version {protocol} is not supported; expected {PROTOCOL_VERSION}"
+        )
 
 
 def _string_array(
-    value: object,
-    path: str,
-    *,
-    maximum_items: int = 10_000,
-    maximum_string: int = 4096,
+    value: object, path: str, *, maximum: int, maximum_string: int
 ) -> list[str]:
-    items = _array(value, path, maximum=maximum_items)
-    result: list[str] = []
-    seen: set[str] = set()
-    for index, item in enumerate(items):
-        text = _string(item, f"{path}[{index}]", maximum=maximum_string)
-        if text not in seen:
-            seen.add(text)
-            result.append(text)
-    return result
+    items = _array(value, path, maximum=maximum)
+    return [
+        _string(item, f"{path}[{index}]", maximum=maximum_string)
+        for index, item in enumerate(items)
+    ]
 
 
 def _details(value: object, path: str) -> dict[str, Any]:
     table = _object(value, path)
-    unknown = set(table) - _DETAIL_FIELDS
-    if unknown:
-        raise ProtocolError(f"{path} contains unsupported retained detail fields")
+    if not set(table).issubset(_SAFE_DETAIL_FIELDS):
+        raise ProtocolError(f"{path} contains unsupported detail fields")
     result: dict[str, Any] = {}
     for key, value in table.items():
-        field_path = f"{path}.{key}"
-        if key in _DETAIL_STRING_FIELDS:
-            result[key] = _string(value, field_path, maximum=512)
-        elif key in _DETAIL_INTEGER_FIELDS:
-            result[key] = _integer(value, field_path)
-        elif key in _DETAIL_NUMBER_FIELDS:
+        item_path = f"{path}.{key}"
+        if key in {"projectId", "repositoryId"}:
+            result[key] = _uuid(value, item_path)
+        elif key in {"emittedCount", "retainedCount"}:
+            result[key] = _integer(value, item_path)
+        elif key == "latency":
             if (
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
-                or not math.isfinite(value)
                 or value < 0
             ):
-                raise ProtocolError(f"{field_path} must be a non-negative number")
+                raise ProtocolError(f"{item_path} must be a nonnegative number")
             result[key] = value
+        elif key == "payloadHash":
+            text = _string(value, item_path, maximum=128)
+            if not re.fullmatch(r"[0-9a-f]{64}", text):
+                raise ProtocolError(f"{item_path} must be a SHA-256 digest")
+            result[key] = text
         else:
-            result[key] = _hash(value, field_path)
+            result[key] = _string(value, item_path, maximum=256)
     if (
         "emittedCount" in result
         and "retainedCount" in result
@@ -380,43 +368,6 @@ def _details(value: object, path: str) -> dict[str, Any]:
     ):
         raise ProtocolError(f"{path}.emittedCount must not exceed retainedCount")
     return result
-
-
-def _bounded_encoded_items(
-    items: list[Any], *, count_limit: int, byte_limit: int
-) -> list[Any]:
-    """Select items in order within explicit count and canonical byte bounds."""
-
-    selected: list[Any] = []
-    encoded_bytes = 2
-    for item in items:
-        if len(selected) >= count_limit:
-            break
-        encoded = json.dumps(
-            item,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-        separator_bytes = 1 if selected else 0
-        if encoded_bytes + separator_bytes + len(encoded) > byte_limit:
-            continue
-        selected.append(item)
-        encoded_bytes += separator_bytes + len(encoded)
-    return selected
-
-
-def _truncation_summary(
-    *, source_count: int, emitted_count: int, limit: int, byte_limit: int
-) -> dict[str, Any]:
-    return {
-        "truncated": emitted_count < source_count,
-        "sourceCount": source_count,
-        "emittedCount": emitted_count,
-        "limit": limit,
-        "byteLimit": byte_limit,
-    }
 
 
 def _host_record(value: object) -> dict[str, Any]:
@@ -439,96 +390,139 @@ def _project_record(value: object, path: str) -> dict[str, Any]:
         "projectId": _uuid(_required(table, "projectId", path), f"{path}.projectId"),
         "name": _string(_required(table, "name", path), f"{path}.name", maximum=256),
     }
-    if "aliases" in table:
-        result["aliases"] = _string_array(
-            table["aliases"], f"{path}.aliases", maximum_string=128
+    result["aliases"] = (
+        _string_array(
+            table["aliases"], f"{path}.aliases", maximum=128, maximum_string=128
         )
-    if "defaultProvider" in table:
-        result["defaultProvider"] = (
-            None
-            if table["defaultProvider"] is None
-            else _provider(table["defaultProvider"], f"{path}.defaultProvider")
-        )
-    if "defaultTransport" in table:
-        result["defaultTransport"] = _enum(
-            table["defaultTransport"], f"{path}.defaultTransport", _TRANSPORTS
-        )
-    if "contextSources" in table:
-        result["contextSources"] = _string_array(
-            table["contextSources"],
-            f"{path}.contextSources",
-            maximum_string=1024,
-        )
-    if "declared" in table:
-        result["declared"] = _boolean(table["declared"], f"{path}.declared")
-    for key in ("createdAt", "updatedAt"):
-        if key in table:
-            result[key] = (
-                None if table[key] is None else _integer(table[key], f"{path}.{key}")
-            )
+        if "aliases" in table
+        else []
+    )
+    result["defaultProvider"] = (
+        None
+        if table.get("defaultProvider") is None
+        else _provider(table["defaultProvider"], f"{path}.defaultProvider")
+    )
+    result["defaultTransport"] = (
+        "tmux"
+        if table.get("defaultTransport") is None
+        else _enum(table["defaultTransport"], f"{path}.defaultTransport", _TRANSPORTS)
+    )
+    result["declared"] = (
+        True
+        if "declared" not in table
+        else _boolean(table["declared"], f"{path}.declared")
+    )
     return result
 
 
-def _location_record(value: object, path: str, host_id: str) -> dict[str, Any]:
+def _membership_record(value: object, path: str) -> dict[str, Any]:
     table = _object(value, path)
-    record_host_id = _uuid(_required(table, "hostId", path), f"{path}.hostId")
-    if record_host_id != host_id:
-        raise ProtocolError(f"{path}.hostId does not match envelope.host.hostId")
-    result: dict[str, Any] = {
-        "locationId": _uuid(_required(table, "locationId", path), f"{path}.locationId"),
+    return {
         "projectId": _uuid(_required(table, "projectId", path), f"{path}.projectId"),
-        "hostId": record_host_id,
-        "path": _string(_required(table, "path", path), f"{path}.path", maximum=4096),
+        "repositoryId": _uuid(
+            _required(table, "repositoryId", path), f"{path}.repositoryId"
+        ),
+        "isPrimary": _boolean(_required(table, "isPrimary", path), f"{path}.isPrimary"),
     }
-    for key, maximum in (("displayName", 256), ("repositoryIdentity", 2048)):
-        if key in table:
-            result[key] = _optional_string(table, key, path, maximum=maximum)
-    if "providerOverride" in table:
-        result["providerOverride"] = (
+
+
+def _repository_record(value: object, path: str) -> dict[str, Any]:
+    table = _object(value, path)
+    return {
+        "repositoryId": _uuid(
+            _required(table, "repositoryId", path), f"{path}.repositoryId"
+        ),
+        "name": _string(_required(table, "name", path), f"{path}.name", maximum=256),
+        "kind": _enum(
+            _required(table, "kind", path), f"{path}.kind", _REPOSITORY_KINDS
+        ),
+        "contextSources": (
+            _string_array(
+                table["contextSources"],
+                f"{path}.contextSources",
+                maximum=256,
+                maximum_string=1024,
+            )
+            if "contextSources" in table
+            else []
+        ),
+    }
+
+
+def _checkout_record(value: object, path: str, host_id: str) -> dict[str, Any]:
+    table = _object(value, path)
+    record_host = _uuid(_required(table, "hostId", path), f"{path}.hostId")
+    if record_host != host_id:
+        raise ProtocolError(f"{path}.hostId does not match envelope.host.hostId")
+    return {
+        "checkoutId": _uuid(_required(table, "checkoutId", path), f"{path}.checkoutId"),
+        "repositoryId": _uuid(
+            _required(table, "repositoryId", path), f"{path}.repositoryId"
+        ),
+        "hostId": record_host,
+        "path": _string(_required(table, "path", path), f"{path}.path", maximum=4096),
+        "kind": _enum(_required(table, "kind", path), f"{path}.kind", _CHECKOUT_KINDS),
+        "displayName": _optional_string(table, "displayName", path, maximum=256),
+        "branch": _optional_string(table, "branch", path, maximum=1024),
+        "providerOverride": (
             None
-            if table["providerOverride"] is None
+            if table.get("providerOverride") is None
             else _provider(table["providerOverride"], f"{path}.providerOverride")
-        )
-    if "transportOverride" in table:
-        result["transportOverride"] = (
+        ),
+        "transportOverride": (
             None
-            if table["transportOverride"] is None
+            if table.get("transportOverride") is None
             else _enum(
                 table["transportOverride"], f"{path}.transportOverride", _TRANSPORTS
             )
-        )
-    for key in ("isDefault", "declared"):
-        if key in table:
-            result[key] = _boolean(table[key], f"{path}.{key}")
-    for key in ("lastObservedAt", "createdAt", "updatedAt"):
-        if key in table:
-            result[key] = (
-                None if table[key] is None else _integer(table[key], f"{path}.{key}")
-            )
-    return result
+        ),
+        "isDefault": False
+        if "isDefault" not in table
+        else _boolean(table["isDefault"], f"{path}.isDefault"),
+        "declared": False
+        if "declared" not in table
+        else _boolean(table["declared"], f"{path}.declared"),
+        "present": True
+        if "present" not in table
+        else _boolean(table["present"], f"{path}.present"),
+    }
 
 
-def _runtime_locator(value: object, path: str) -> dict[str, Any]:
+def _task_record(value: object, path: str, host_id: str) -> dict[str, Any]:
     table = _object(value, path)
-    result: dict[str, Any] = {}
-    if "pid" in table:
-        if table["pid"] is None:
-            result["pid"] = None
-        else:
-            pid = _integer(table["pid"], f"{path}.pid")
-            if pid == 0:
-                raise ProtocolError(f"{path}.pid must be a positive integer")
-            result["pid"] = pid
-    for key in ("providerRuntimeId", "tmuxSession", "tmuxWindow", "tmuxPane"):
-        if key in table:
-            result[key] = _optional_string(table, key, path, maximum=1024)
-    if "observedAt" in table:
-        result["observedAt"] = (
+    record_host = _uuid(_required(table, "hostId", path), f"{path}.hostId")
+    if record_host != host_id:
+        raise ProtocolError(f"{path}.hostId does not match envelope.host.hostId")
+    status = _enum(_required(table, "status", path), f"{path}.status", _TASK_STATUSES)
+    closed_at = (
+        None
+        if table.get("closedAt") is None
+        else _integer(table["closedAt"], f"{path}.closedAt")
+    )
+    if (status == "closed") != (closed_at is not None):
+        raise ProtocolError(f"{path}.closedAt disagrees with task status")
+    current = table.get("currentSessionKey")
+    return {
+        "taskId": _uuid(_required(table, "taskId", path), f"{path}.taskId"),
+        "hostId": record_host,
+        "projectId": _uuid(_required(table, "projectId", path), f"{path}.projectId"),
+        "checkoutId": _optional_uuid(table, "checkoutId", path),
+        "title": _string(_required(table, "title", path), f"{path}.title", maximum=256),
+        "purpose": _optional_string(table, "purpose", path, maximum=4096),
+        "preferredProvider": (
             None
-            if table["observedAt"] is None
-            else _integer(table["observedAt"], f"{path}.observedAt")
-        )
-    return result
+            if table.get("preferredProvider") is None
+            else _provider(table["preferredProvider"], f"{path}.preferredProvider")
+        ),
+        "status": status,
+        "pinned": _boolean(_required(table, "pinned", path), f"{path}.pinned"),
+        "currentSessionKey": None
+        if current is None
+        else _session_key(current, f"{path}.currentSessionKey")[0],
+        "createdAt": _integer(_required(table, "createdAt", path), f"{path}.createdAt"),
+        "updatedAt": _integer(_required(table, "updatedAt", path), f"{path}.updatedAt"),
+        "closedAt": closed_at,
+    }
 
 
 def _session_record(value: object, path: str, host_id: str) -> dict[str, Any]:
@@ -538,28 +532,31 @@ def _session_record(value: object, path: str, host_id: str) -> dict[str, Any]:
     )
     record_host = _uuid(_required(table, "hostId", path), f"{path}.hostId")
     provider = _provider(_required(table, "provider", path), f"{path}.provider")
-    provider_session_id = _uuid(
+    provider_id = _uuid(
         _required(table, "providerSessionId", path), f"{path}.providerSessionId"
     )
     if record_host != host_id or key_host != host_id:
         raise ProtocolError(f"{path} belongs to a different host")
-    if provider != key_provider or provider_session_id != key_provider_id:
+    if provider != key_provider or provider_id != key_provider_id:
         raise ProtocolError(f"{path} identity fields disagree with sessionKey")
-    first_observed_at = _integer(
+    first = _integer(
         _required(table, "firstObservedAt", path), f"{path}.firstObservedAt"
     )
-    last_observed_at = _integer(
-        _required(table, "lastObservedAt", path), f"{path}.lastObservedAt"
-    )
-    if last_observed_at < first_observed_at:
+    last = _integer(_required(table, "lastObservedAt", path), f"{path}.lastObservedAt")
+    if last < first:
         raise ProtocolError(f"{path} observation timestamps are reversed")
     result: dict[str, Any] = {
         "sessionKey": session_key,
         "hostId": record_host,
         "provider": provider,
-        "providerSessionId": provider_session_id,
-        "firstObservedAt": first_observed_at,
-        "lastObservedAt": last_observed_at,
+        "providerSessionId": provider_id,
+        "projectId": _optional_uuid(table, "projectId", path),
+        "taskId": _optional_uuid(table, "taskId", path),
+        "checkoutId": _optional_uuid(table, "checkoutId", path),
+        "name": _optional_string(table, "name", path, maximum=512),
+        "purpose": _optional_string(table, "purpose", path, maximum=4096),
+        "firstObservedAt": first,
+        "lastObservedAt": last,
         "metadataSource": _string(
             _required(table, "metadataSource", path),
             f"{path}.metadataSource",
@@ -591,19 +588,11 @@ def _session_record(value: object, path: str, host_id: str) -> dict[str, Any]:
             f"{path}.stateConfidence",
             _STATE_CONFIDENCE,
         ),
+        "surfaceId": _optional_uuid(table, "surfaceId", path),
+        "pinned": False
+        if "pinned" not in table
+        else _boolean(table["pinned"], f"{path}.pinned"),
     }
-    for key in (
-        "projectId",
-        "locationId",
-        "surfaceId",
-        "latestHandoffId",
-        "continuedFromHandoffId",
-    ):
-        if key in table:
-            result[key] = _optional_uuid(table, key, path)
-    for key, maximum in (("name", 512), ("purpose", 4096), ("cwd", 4096)):
-        if key in table:
-            result[key] = _optional_string(table, key, path, maximum=maximum)
     for key in (
         "createdAt",
         "providerUpdatedAt",
@@ -611,18 +600,9 @@ def _session_record(value: object, path: str, host_id: str) -> dict[str, Any]:
         "stateObservedAt",
         "wrappedAt",
     ):
-        if key in table:
-            result[key] = (
-                None if table[key] is None else _integer(table[key], f"{path}.{key}")
-            )
-    if "runtimeLocator" in table:
-        result["runtimeLocator"] = (
-            None
-            if table["runtimeLocator"] is None
-            else _runtime_locator(table["runtimeLocator"], f"{path}.runtimeLocator")
+        result[key] = (
+            None if table.get(key) is None else _integer(table[key], f"{path}.{key}")
         )
-    if "pinned" in table:
-        result["pinned"] = _boolean(table["pinned"], f"{path}.pinned")
     return result
 
 
@@ -632,9 +612,17 @@ def _runtime_record(value: object, path: str, host_id: str) -> dict[str, Any]:
     provider = _provider(_required(table, "provider", path), f"{path}.provider")
     if record_host != host_id:
         raise ProtocolError(f"{path}.hostId does not match envelope.host.hostId")
+    session_key = None
+    if table.get("sessionKey") is not None:
+        session_key, key_host, key_provider, _ = _session_key(
+            table["sessionKey"], f"{path}.sessionKey"
+        )
+        if key_host != host_id or key_provider != provider:
+            raise ProtocolError(f"{path}.sessionKey does not match host/provider")
     result: dict[str, Any] = {
         "hostId": record_host,
         "provider": provider,
+        "sessionKey": session_key,
         "runtimePresence": _enum(
             _required(table, "runtimePresence", path),
             f"{path}.runtimePresence",
@@ -660,48 +648,11 @@ def _runtime_record(value: object, path: str, host_id: str) -> dict[str, Any]:
             _required(table, "observedAt", path), f"{path}.observedAt"
         ),
     }
-    if "sessionKey" in table:
-        if table["sessionKey"] is None:
-            result["sessionKey"] = None
-        else:
-            session_key, key_host, key_provider, _ = _session_key(
-                table["sessionKey"], f"{path}.sessionKey"
-            )
-            if key_host != host_id or key_provider != provider:
-                raise ProtocolError(f"{path}.sessionKey does not match host/provider")
-            result["sessionKey"] = session_key
-    if "launchId" in table:
-        result["launchId"] = _optional_uuid(table, "launchId", path)
-    for key in ("observationId", "observationKey", "source", "providerRuntimeId"):
-        if key in table:
-            result[key] = _optional_string(table, key, path, maximum=256)
-    if "sourcePriority" in table:
-        result["sourcePriority"] = _integer(
-            table["sourcePriority"], f"{path}.sourcePriority"
-        )
-    if "pid" in table:
-        if table["pid"] is None:
-            result["pid"] = None
-        else:
-            pid = _integer(table["pid"], f"{path}.pid")
-            if pid == 0:
-                raise ProtocolError(f"{path}.pid must be a positive integer")
-            result["pid"] = pid
-    for key in ("tmuxSession", "tmuxWindow", "tmuxPane"):
-        if key in table:
-            result[key] = _optional_string(table, key, path, maximum=256)
-    if "receivedAt" in table:
-        result["receivedAt"] = (
-            None
-            if table["receivedAt"] is None
-            else _integer(table["receivedAt"], f"{path}.receivedAt")
-        )
-    if "payloadHash" in table:
-        result["payloadHash"] = (
-            None
-            if table["payloadHash"] is None
-            else _hash(table["payloadHash"], f"{path}.payloadHash")
-        )
+    if table.get("pid") is not None:
+        pid = _integer(table["pid"], f"{path}.pid")
+        if pid == 0:
+            raise ProtocolError(f"{path}.pid must be positive")
+        result["pid"] = pid
     return result
 
 
@@ -711,19 +662,29 @@ def _surface_record(value: object, path: str, host_id: str) -> dict[str, Any]:
     provider = _provider(_required(table, "provider", path), f"{path}.provider")
     if record_host != host_id:
         raise ProtocolError(f"{path}.hostId does not match envelope.host.hostId")
-    role = _enum(_required(table, "role", path), f"{path}.role", _SURFACE_ROLES)
-    binding = _enum(
-        _required(table, "bindingConfidence", path),
-        f"{path}.bindingConfidence",
-        _BINDING_CONFIDENCE,
-    )
+    current = None
+    if table.get("currentSessionKey") is not None:
+        current, key_host, key_provider, _ = _session_key(
+            table["currentSessionKey"], f"{path}.currentSessionKey"
+        )
+        if key_host != host_id or key_provider != provider:
+            raise ProtocolError(
+                f"{path}.currentSessionKey does not match host/provider"
+            )
     created_at = _integer(_required(table, "createdAt", path), f"{path}.createdAt")
     last_observed_at = _integer(
         _required(table, "lastObservedAt", path), f"{path}.lastObservedAt"
     )
     if last_observed_at < created_at:
         raise ProtocolError(f"{path} observation timestamps are reversed")
-    result: dict[str, Any] = {
+    retired_at = (
+        None
+        if table.get("retiredAt") is None
+        else _integer(table["retiredAt"], f"{path}.retiredAt")
+    )
+    if retired_at is not None and not created_at <= retired_at <= last_observed_at:
+        raise ProtocolError(f"{path}.retiredAt is outside the observation lifetime")
+    result = {
         "surfaceId": _uuid(_required(table, "surfaceId", path), f"{path}.surfaceId"),
         "hostId": record_host,
         "provider": provider,
@@ -733,59 +694,27 @@ def _surface_record(value: object, path: str, host_id: str) -> dict[str, Any]:
         "transportLocator": _string(
             _required(table, "transportLocator", path),
             f"{path}.transportLocator",
-            maximum=1024,
+            maximum=4096,
         ),
-        "role": role,
-        "bindingConfidence": binding,
+        "role": _enum(_required(table, "role", path), f"{path}.role", _SURFACE_ROLES),
+        "currentSessionKey": current,
+        "bindingConfidence": _enum(
+            _required(table, "bindingConfidence", path),
+            f"{path}.bindingConfidence",
+            _BINDING_CONFIDENCE,
+        ),
+        "launchId": _optional_uuid(table, "launchId", path),
         "createdAt": created_at,
         "lastObservedAt": last_observed_at,
         "clientAttached": _boolean(
             _required(table, "clientAttached", path), f"{path}.clientAttached"
         ),
+        "retiredAt": retired_at,
     }
-    if role == "provider_manager" and binding != "unknown":
-        raise ProtocolError(
-            f"{path}.bindingConfidence must be unknown for provider_manager"
-        )
-    if "currentSessionKey" in table:
-        if table["currentSessionKey"] is None:
-            result["currentSessionKey"] = None
-        else:
-            session_key, key_host, key_provider, _ = _session_key(
-                table["currentSessionKey"], f"{path}.currentSessionKey"
-            )
-            if key_host != host_id or key_provider != provider:
-                raise ProtocolError(
-                    f"{path}.currentSessionKey does not match host/provider"
-                )
-            if role == "provider_manager":
-                raise ProtocolError(
-                    f"{path}.currentSessionKey is invalid for provider_manager"
-                )
-            result["currentSessionKey"] = session_key
-    if binding == "confirmed" and result.get("currentSessionKey") is None:
-        raise ProtocolError(
-            f"{path}.bindingConfidence confirmed requires currentSessionKey"
-        )
-    if "launchId" in table:
-        result["launchId"] = _optional_uuid(table, "launchId", path)
-    if "workspaceId" in table:
-        result["workspaceId"] = _optional_string(
-            table, "workspaceId", path, maximum=256
-        )
-    if "retiredAt" in table:
-        result["retiredAt"] = (
-            None
-            if table["retiredAt"] is None
-            else _integer(table["retiredAt"], f"{path}.retiredAt")
-        )
-    retired_at = result.get("retiredAt")
-    if retired_at is not None and not created_at <= retired_at <= last_observed_at:
-        raise ProtocolError(f"{path}.retiredAt is outside the observation lifetime")
     if retired_at is not None and (
-        result.get("currentSessionKey") is not None
-        or binding != "unknown"
-        or result["clientAttached"] is not False
+        current is not None
+        or result["bindingConfidence"] != "unknown"
+        or result["clientAttached"]
     ):
         raise ProtocolError(f"{path} retired surface is still bound or attached")
     return result
@@ -809,48 +738,48 @@ def _degradation(value: object, path: str) -> dict[str, Any]:
 
 def _capability_record(value: object, path: str) -> dict[str, Any]:
     table = _object(value, path)
-    contract_path = f"{path}.testedContractRange"
-    contract = _object(_required(table, "testedContractRange", path), contract_path)
-    features = _string_array(
-        _required(table, "features", path), f"{path}.features", maximum_string=256
-    )
-    raw_reasons = _array(
-        _required(table, "degradedReasons", path), f"{path}.degradedReasons"
+    contract = _object(
+        _required(table, "testedContractRange", path), f"{path}.testedContractRange"
     )
     reasons = [
         _degradation(item, f"{path}.degradedReasons[{index}]")
-        for index, item in enumerate(raw_reasons)
+        for index, item in enumerate(
+            _array(
+                _required(table, "degradedReasons", path),
+                f"{path}.degradedReasons",
+                maximum=256,
+            )
+        )
     ]
     available = _boolean(_required(table, "available", path), f"{path}.available")
     if not available and not reasons:
         raise ProtocolError(f"{path}.degradedReasons must explain unavailable provider")
-    result: dict[str, Any] = {
+    return {
         "provider": _provider(_required(table, "provider", path), f"{path}.provider"),
         "available": available,
+        "providerVersion": _optional_string(
+            table, "providerVersion", path, maximum=256
+        ),
         "testedContractRange": {
             "minimum": _string(
-                _required(contract, "minimum", contract_path),
-                f"{contract_path}.minimum",
+                _required(contract, "minimum", f"{path}.testedContractRange"),
+                f"{path}.testedContractRange.minimum",
                 maximum=256,
             ),
             "maximum": _string(
-                _required(contract, "maximum", contract_path),
-                f"{contract_path}.maximum",
+                _required(contract, "maximum", f"{path}.testedContractRange"),
+                f"{path}.testedContractRange.maximum",
                 maximum=256,
             ),
         },
-        "features": features,
+        "features": _string_array(
+            _required(table, "features", path),
+            f"{path}.features",
+            maximum=256,
+            maximum_string=256,
+        ),
         "degradedReasons": reasons,
     }
-    if table.get("providerVersion") is not None:
-        result["providerVersion"] = _string(
-            table["providerVersion"], f"{path}.providerVersion", maximum=256
-        )
-    if table.get("schemaFingerprint") is not None:
-        result["schemaFingerprint"] = _hash(
-            table["schemaFingerprint"], f"{path}.schemaFingerprint"
-        )
-    return result
 
 
 def _error_record(value: object, path: str) -> dict[str, Any]:
@@ -866,49 +795,37 @@ def _error_record(value: object, path: str) -> dict[str, Any]:
             _required(table, "observedAt", path), f"{path}.observedAt"
         ),
     }
-    if table.get("hostId") is not None:
-        result["hostId"] = _uuid(table["hostId"], f"{path}.hostId")
+    for key in (
+        "hostId",
+        "projectId",
+        "repositoryId",
+        "checkoutId",
+        "taskId",
+        "launchId",
+        "surfaceId",
+    ):
+        if table.get(key) is not None:
+            result[key] = _uuid(table[key], f"{path}.{key}")
     if table.get("provider") is not None:
         result["provider"] = _provider(table["provider"], f"{path}.provider")
     if table.get("sessionKey") is not None:
-        session_key, key_host, key_provider, _ = _session_key(
-            table["sessionKey"], f"{path}.sessionKey"
-        )
-        if "hostId" in result and result["hostId"] != key_host:
-            raise ProtocolError(f"{path} session/host routing fields disagree")
-        if "provider" in result and result["provider"] != key_provider:
-            raise ProtocolError(f"{path} session/provider routing fields disagree")
-        result["sessionKey"] = session_key
+        result["sessionKey"] = _session_key(table["sessionKey"], f"{path}.sessionKey")[
+            0
+        ]
     if table.get("details") is not None:
         result["details"] = _details(table["details"], f"{path}.details")
     return result
 
 
 def parse_presentation_plan(raw: str | bytes | bytearray) -> dict[str, Any]:
-    """Validate and project one public PresentationPlan v1 envelope."""
+    """Validate and project one public PresentationPlan v2 envelope."""
 
     table = _decode(raw)
-    schema = _integer(
-        _required(table, "schemaVersion", "envelope"), "envelope.schemaVersion"
-    )
-    protocol = _integer(
-        _required(table, "protocolVersion", "envelope"),
-        "envelope.protocolVersion",
-    )
-    if schema != SCHEMA_VERSION:
-        raise ProtocolError(
-            f"schema version {schema} is not supported; expected {SCHEMA_VERSION}"
-        )
-    if protocol != PROTOCOL_VERSION:
-        raise ProtocolError(
-            f"protocol version {protocol} is not supported; expected {PROTOCOL_VERSION}"
-        )
+    _versions(table)
     path = "envelope.plan"
     source = _object(_required(table, "plan", "envelope"), path)
     kind = _enum(
-        _required(source, "kind", path),
-        f"{path}.kind",
-        _PRESENTATION_PLAN_KINDS,
+        _required(source, "kind", path), f"{path}.kind", _PRESENTATION_PLAN_KINDS
     )
     result: dict[str, Any] = {
         "kind": kind,
@@ -930,8 +847,7 @@ def parse_presentation_plan(raw: str | bytes | bytearray) -> dict[str, Any]:
         )
     if source.get("error") is not None:
         result["error"] = _error_record(source["error"], f"{path}.error")
-
-    locator_fields = (
+    locators = (
         "surfaceId",
         "workspaceId",
         "tmuxTarget",
@@ -940,57 +856,36 @@ def parse_presentation_plan(raw: str | bytes | bytearray) -> dict[str, Any]:
         "leaseExpiresAt",
     )
     if kind == "blocked":
-        if "error" not in result:
-            raise ProtocolError(f"{path} blocked plan requires error")
-        if any(field in result for field in locator_fields):
-            raise ProtocolError(f"{path} blocked plan contains surface locators")
+        if "error" not in result or any(field in result for field in locators):
+            raise ProtocolError(f"{path} blocked plan shape is invalid")
         return result
-    if "error" in result:
-        raise ProtocolError(f"{path} executable plan contains error")
-    if "surfaceId" not in result:
-        raise ProtocolError(f"{path} executable plan requires surfaceId")
+    if "error" in result or "surfaceId" not in result:
+        raise ProtocolError(f"{path} executable plan shape is invalid")
     if kind == "focus":
-        if "desktopToken" not in result:
-            raise ProtocolError(f"{path} focus plan requires desktopToken")
-        if any(
+        if "desktopToken" not in result or any(
             field in result for field in ("tmuxTarget", "tmuxClient", "leaseExpiresAt")
         ):
-            raise ProtocolError(f"{path} focus plan contains non-applicable fields")
+            raise ProtocolError(f"{path} focus plan shape is invalid")
     elif kind == "switch":
         if "tmuxTarget" not in result or "tmuxClient" not in result:
-            raise ProtocolError(
-                f"{path} switch plan requires tmuxTarget and tmuxClient"
-            )
+            raise ProtocolError(f"{path} switch plan shape is invalid")
     elif kind == "attach":
-        if "tmuxTarget" not in result:
-            raise ProtocolError(f"{path} attach plan requires tmuxTarget")
-        if "tmuxClient" in result:
-            raise ProtocolError(f"{path} attach plan contains non-applicable fields")
+        if "tmuxTarget" not in result or "tmuxClient" in result:
+            raise ProtocolError(f"{path} attach plan shape is invalid")
     return result
 
 
 def parse_session_action(raw: str | bytes | bytearray) -> dict[str, Any]:
-    """Validate and project one public Claude stop-action v1 envelope."""
+    """Validate and project one public Claude stop-action v2 envelope."""
 
     table = _decode(raw)
-    schema = _integer(
-        _required(table, "schemaVersion", "envelope"), "envelope.schemaVersion"
-    )
-    protocol = _integer(
-        _required(table, "protocolVersion", "envelope"),
-        "envelope.protocolVersion",
-    )
-    if schema != SCHEMA_VERSION or protocol != PROTOCOL_VERSION:
-        raise ProtocolError("session action protocol version is incompatible")
+    _versions(table)
     path = "envelope.action"
     source = _object(_required(table, "action", "envelope"), path)
-    kind = _string(_required(source, "kind", path), f"{path}.kind", maximum=16)
-    if kind != "stop":
+    if _string(_required(source, "kind", path), f"{path}.kind", maximum=16) != "stop":
         raise ProtocolError(f"{path}.kind is unsupported")
     status = _enum(
-        _required(source, "status", path),
-        f"{path}.status",
-        _SESSION_ACTION_STATUSES,
+        _required(source, "status", path), f"{path}.status", _SESSION_ACTION_STATUSES
     )
     host_id = _uuid(_required(source, "hostId", path), f"{path}.hostId")
     session_key, key_host, provider, _ = _session_key(
@@ -999,29 +894,21 @@ def parse_session_action(raw: str | bytes | bytearray) -> dict[str, Any]:
     if key_host != host_id or provider != "claude":
         raise ProtocolError(f"{path} is not a host-local Claude identity")
     result: dict[str, Any] = {
-        "kind": kind,
+        "kind": "stop",
         "status": status,
         "hostId": host_id,
         "sessionKey": session_key,
     }
     if source.get("error") is not None:
         result["error"] = _error_record(source["error"], f"{path}.error")
-    if status == "blocked":
-        error = result.get("error")
-        if not isinstance(error, dict):
-            raise ProtocolError(f"{path} blocked action requires an error")
-        if (
-            error.get("hostId") not in {None, host_id}
-            or error.get("provider") not in {None, "claude"}
-            or error.get("sessionKey") not in {None, session_key}
-        ):
-            raise ProtocolError(f"{path} error routing fields disagree")
-    elif "error" in result:
+    if status == "blocked" and "error" not in result:
+        raise ProtocolError(f"{path} blocked action requires an error")
+    if status != "blocked" and "error" in result:
         raise ProtocolError(f"{path} successful action contains an error")
     return result
 
 
-def _unique(records: list[dict[str, Any]], key: str, collection: str) -> set[str]:
+def _unique(records: Iterable[dict[str, Any]], key: str, collection: str) -> set[str]:
     values = [str(record[key]) for record in records]
     if len(values) != len(set(values)):
         raise ProtocolError(f"envelope.{collection} contains duplicate {key} values")
@@ -1030,20 +917,7 @@ def _unique(records: list[dict[str, Any]], key: str, collection: str) -> set[str
 
 def _validated_snapshot(raw: str | bytes | bytearray) -> dict[str, Any]:
     table = _decode(raw)
-    schema = _integer(
-        _required(table, "schemaVersion", "envelope"), "envelope.schemaVersion"
-    )
-    protocol = _integer(
-        _required(table, "protocolVersion", "envelope"), "envelope.protocolVersion"
-    )
-    if schema != SCHEMA_VERSION:
-        raise ProtocolError(
-            f"schema version {schema} is not supported; expected {SCHEMA_VERSION}"
-        )
-    if protocol != PROTOCOL_VERSION:
-        raise ProtocolError(
-            f"protocol version {protocol} is not supported; expected {PROTOCOL_VERSION}"
-        )
+    _versions(table)
     generated_at = _integer(
         _required(table, "generatedAt", "envelope"), "envelope.generatedAt"
     )
@@ -1061,9 +935,21 @@ def _validated_snapshot(raw: str | bytes | bytearray) -> dict[str, Any]:
         _project_record(item, f"envelope.projects[{index}]")
         for index, item in enumerate(records("projects"))
     ]
-    locations = [
-        _location_record(item, f"envelope.locations[{index}]", host_id)
-        for index, item in enumerate(records("locations"))
+    memberships = [
+        _membership_record(item, f"envelope.projectRepositories[{index}]")
+        for index, item in enumerate(records("projectRepositories"))
+    ]
+    repositories = [
+        _repository_record(item, f"envelope.repositories[{index}]")
+        for index, item in enumerate(records("repositories"))
+    ]
+    checkouts = [
+        _checkout_record(item, f"envelope.checkouts[{index}]", host_id)
+        for index, item in enumerate(records("checkouts"))
+    ]
+    tasks = [
+        _task_record(item, f"envelope.tasks[{index}]", host_id)
+        for index, item in enumerate(records("tasks"))
     ]
     sessions = [
         _session_record(item, f"envelope.sessions[{index}]", host_id)
@@ -1079,113 +965,156 @@ def _validated_snapshot(raw: str | bytes | bytearray) -> dict[str, Any]:
     ]
     capabilities = [
         _capability_record(item, f"envelope.capabilities[{index}]")
-        for index, item in enumerate(
-            _array(
-                _required(table, "capabilities", "envelope"),
-                "envelope.capabilities",
-            )
-        )
+        for index, item in enumerate(records("capabilities"))
     ]
     errors = [
         _error_record(item, f"envelope.errors[{index}]")
-        for index, item in enumerate(
-            _array(_required(table, "errors", "envelope"), "envelope.errors")
-        )
+        for index, item in enumerate(records("errors"))
     ]
 
     project_ids = _unique(projects, "projectId", "projects")
-    _unique(locations, "locationId", "locations")
+    repository_ids = _unique(repositories, "repositoryId", "repositories")
+    _unique(checkouts, "checkoutId", "checkouts")
+    _unique(tasks, "taskId", "tasks")
     session_keys = _unique(sessions, "sessionKey", "sessions")
     surface_ids = _unique(surfaces, "surfaceId", "surfaces")
     providers = [capability["provider"] for capability in capabilities]
     if len(providers) != len(set(providers)):
         raise ProtocolError("envelope contains duplicate provider capabilities")
 
-    locations_by_id = {location["locationId"]: location for location in locations}
-    for index, location in enumerate(locations):
-        if location["projectId"] not in project_ids:
+    membership_keys = {
+        (item["projectId"], item["repositoryId"]) for item in memberships
+    }
+    if len(membership_keys) != len(memberships):
+        raise ProtocolError(
+            "envelope contains duplicate project repository memberships"
+        )
+    primary_counts: dict[str, int] = {}
+    for index, membership in enumerate(memberships):
+        if (
+            membership["projectId"] not in project_ids
+            or membership["repositoryId"] not in repository_ids
+        ):
             raise ProtocolError(
-                f"envelope.locations[{index}].projectId is not in projects"
+                f"envelope.projectRepositories[{index}] references unknown identity"
+            )
+        primary_counts[membership["projectId"]] = primary_counts.get(
+            membership["projectId"], 0
+        ) + int(membership["isPrimary"])
+    for project_id in project_ids:
+        if (
+            any(key[0] == project_id for key in membership_keys)
+            and primary_counts.get(project_id) != 1
+        ):
+            raise ProtocolError(
+                f"envelope project {project_id} requires one primary repository"
             )
 
+    checkouts_by_id = {item["checkoutId"]: item for item in checkouts}
+    for index, checkout in enumerate(checkouts):
+        if checkout["repositoryId"] not in repository_ids:
+            raise ProtocolError(
+                f"envelope.checkouts[{index}].repositoryId is not in repositories"
+            )
+    tasks_by_id = {item["taskId"]: item for item in tasks}
+    for index, task in enumerate(tasks):
+        if task["projectId"] not in project_ids:
+            raise ProtocolError(f"envelope.tasks[{index}].projectId is not in projects")
+        checkout = checkouts_by_id.get(task["checkoutId"])
+        if task["checkoutId"] is not None and (
+            checkout is None
+            or (task["projectId"], checkout["repositoryId"]) not in membership_keys
+        ):
+            raise ProtocolError(f"envelope.tasks[{index}] checkout/project disagree")
+
+    sessions_by_key = {item["sessionKey"]: item for item in sessions}
     for index, session in enumerate(sessions):
-        project_id = session.get("projectId")
-        location_id = session.get("locationId")
+        project_id = session["projectId"]
+        checkout = checkouts_by_id.get(session["checkoutId"])
+        task = tasks_by_id.get(session["taskId"])
         if project_id is not None and project_id not in project_ids:
             raise ProtocolError(
                 f"envelope.sessions[{index}].projectId is not in projects"
             )
-        if location_id is not None:
-            location = locations_by_id.get(location_id)
-            if location is None:
-                raise ProtocolError(
-                    f"envelope.sessions[{index}].locationId is not in locations"
-                )
-            if project_id is None or location["projectId"] != project_id:
-                raise ProtocolError(
-                    f"envelope.sessions[{index}] location/project disagree"
-                )
-        surface_id = session.get("surfaceId")
-        if surface_id is not None and surface_id not in surface_ids:
+        if session["checkoutId"] is not None and (
+            checkout is None
+            or project_id is None
+            or (project_id, checkout["repositoryId"]) not in membership_keys
+        ):
+            raise ProtocolError(f"envelope.sessions[{index}] checkout/project disagree")
+        if session["taskId"] is not None and (
+            task is None
+            or task["projectId"] != project_id
+            or task["checkoutId"] != session["checkoutId"]
+        ):
+            raise ProtocolError(f"envelope.sessions[{index}] task context disagrees")
+        if session["surfaceId"] is not None and session["surfaceId"] not in surface_ids:
             raise ProtocolError(
                 f"envelope.sessions[{index}].surfaceId is not in surfaces"
             )
-
-    for collection, collection_name, key in (
-        (runtimes, "runtimes", "sessionKey"),
-        (surfaces, "surfaces", "currentSessionKey"),
+    for index, task in enumerate(tasks):
+        current = task["currentSessionKey"]
+        if current is not None and (
+            current not in session_keys
+            or sessions_by_key[current]["taskId"] != task["taskId"]
+        ):
+            raise ProtocolError(
+                f"envelope.tasks[{index}] current session backreference disagrees"
+            )
+    for collection_name, collection, key in (
+        ("runtimes", runtimes, "sessionKey"),
+        ("surfaces", surfaces, "currentSessionKey"),
     ):
         for index, record in enumerate(collection):
-            session_key = record.get(key)
-            if session_key is not None and session_key not in session_keys:
+            if record[key] is not None and record[key] not in session_keys:
                 raise ProtocolError(
                     f"envelope.{collection_name}[{index}].{key} is not in sessions"
                 )
-
-    sessions_by_key = {session["sessionKey"]: session for session in sessions}
-    surfaces_by_id = {surface["surfaceId"]: surface for surface in surfaces}
+    surfaces_by_id = {item["surfaceId"]: item for item in surfaces}
     for index, session in enumerate(sessions):
-        surface_id = session.get("surfaceId")
-        if surface_id is None:
-            continue
-        if surfaces_by_id[surface_id].get("currentSessionKey") != session["sessionKey"]:
+        surface_id = session["surfaceId"]
+        if (
+            surface_id is not None
+            and surfaces_by_id[surface_id]["currentSessionKey"] != session["sessionKey"]
+        ):
             raise ProtocolError(
                 f"envelope.sessions[{index}] surface binding is inconsistent"
             )
     for index, surface in enumerate(surfaces):
-        session_key = surface.get("currentSessionKey")
-        if session_key is None:
-            continue
-        if sessions_by_key[session_key].get("surfaceId") != surface["surfaceId"]:
+        current = surface["currentSessionKey"]
+        if (
+            current is not None
+            and sessions_by_key[current]["surfaceId"] != surface["surfaceId"]
+        ):
             raise ProtocolError(
                 f"envelope.surfaces[{index}] session binding is inconsistent"
             )
-
     for index, error in enumerate(errors):
-        if error.get("hostId") is not None and error["hostId"] != host_id:
+        if error.get("hostId") not in {None, host_id}:
             raise ProtocolError(
                 f"envelope.errors[{index}].hostId belongs to another host"
             )
         if error.get("sessionKey") is not None:
-            _, key_host, key_provider, _ = _session_key(
+            _, error_host, error_provider, _ = _session_key(
                 error["sessionKey"], f"envelope.errors[{index}].sessionKey"
             )
-            if key_host != host_id:
+            if error_host != host_id:
                 raise ProtocolError(
                     f"envelope.errors[{index}].sessionKey belongs to another host"
                 )
-            if error.get("provider") is not None and error["provider"] != key_provider:
+            if error.get("provider") not in {None, error_provider}:
                 raise ProtocolError(
                     f"envelope.errors[{index}] session/provider disagree"
                 )
 
     return {
-        "schemaVersion": schema,
-        "protocolVersion": protocol,
         "generatedAt": generated_at,
         "host": host,
         "projects": projects,
-        "locations": locations,
+        "projectRepositories": memberships,
+        "repositories": repositories,
+        "checkouts": checkouts,
+        "tasks": tasks,
         "sessions": sessions,
         "runtimes": runtimes,
         "surfaces": surfaces,
@@ -1196,1106 +1125,504 @@ def _validated_snapshot(raw: str | bytes | bytearray) -> dict[str, Any]:
 
 def _recency(session: dict[str, Any]) -> int:
     for key in ("lastActivityAt", "providerUpdatedAt", "createdAt", "lastObservedAt"):
-        value = session.get(key)
-        if value is not None:
-            return int(value)
-    raise AssertionError("validated sessions always contain lastObservedAt")
+        if session.get(key) is not None:
+            return int(session[key])
+    raise AssertionError("validated sessions contain lastObservedAt")
 
 
-def _project_session(
-    session: dict[str, Any],
-    projects: dict[str, dict[str, Any]],
-    locations: dict[str, dict[str, Any]],
-    surfaces: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    project_id = session.get("projectId")
-    location_id = session.get("locationId")
-    project = projects.get(project_id) if isinstance(project_id, str) else None
-    location = locations.get(location_id) if isinstance(location_id, str) else None
-    surface_id = session.get("surfaceId")
-    surface = surfaces.get(surface_id) if isinstance(surface_id, str) else None
-    can_stop = (
+def _can_stop(session: dict[str, Any], surfaces: dict[str, dict[str, Any]]) -> bool:
+    surface = surfaces.get(session["surfaceId"])
+    return bool(
         session["provider"] == "claude"
         and session["runtimePresence"] == "live"
         and surface is not None
-        and surface.get("transport") == "tmux"
-        and surface.get("role") == "session"
-        and surface.get("currentSessionKey") == session["sessionKey"]
-        and surface.get("bindingConfidence") == "confirmed"
-        and isinstance(surface.get("launchId"), str)
-        and surface.get("retiredAt") is None
+        and surface["transport"] == "tmux"
+        and surface["role"] == "session"
+        and surface["currentSessionKey"] == session["sessionKey"]
+        and surface["bindingConfidence"] == "confirmed"
+        and surface["launchId"] is not None
+        and surface["retiredAt"] is None
     )
+
+
+def _session_state(
+    session: dict[str, Any], surfaces: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     return {
-        "sessionKey": session["sessionKey"],
-        "hostId": session["hostId"],
         "provider": session["provider"],
-        "providerSessionId": session["providerSessionId"],
-        "projectId": session.get("projectId"),
-        "projectName": None if project is None else project["name"],
-        "locationId": session.get("locationId"),
-        "locationName": None if location is None else location.get("displayName"),
-        "name": session.get("name"),
-        "purpose": session.get("purpose"),
-        "cwd": session.get("cwd"),
-        "firstObservedAt": session["firstObservedAt"],
-        "lastObservedAt": session["lastObservedAt"],
-        "createdAt": session.get("createdAt"),
-        "providerUpdatedAt": session.get("providerUpdatedAt"),
-        "lastActivityAt": session.get("lastActivityAt"),
-        "stateObservedAt": session.get("stateObservedAt"),
-        "wrappedAt": session.get("wrappedAt"),
-        "recencyAt": _recency(session),
-        "metadataSource": session["metadataSource"],
+        "sessionKey": session["sessionKey"],
         "runtimePresence": session["runtimePresence"],
         "resumability": session["resumability"],
         "activity": session["activity"],
         "activityReason": session["activityReason"],
         "attachment": session["attachment"],
         "stateConfidence": session["stateConfidence"],
-        "pinned": session.get("pinned", False),
-        "canStop": can_stop,
+        "recencyAt": _recency(session),
+        "canStop": _can_stop(session, surfaces),
     }
 
 
-def _launch_target_sort_key(target: dict[str, Any]) -> tuple[object, ...]:
-    location_name = target["locationName"]
-    return (
-        str(target["projectName"]).casefold(),
-        target["projectName"],
-        target["projectId"],
-        not target["isDefault"],
-        "" if location_name is None else str(location_name).casefold(),
-        "" if location_name is None else location_name,
-        target["locationId"],
-        0 if target["provider"] == "codex" else 1,
-    )
+def _bounded(
+    items: list[dict[str, Any]], *, count: int, byte_limit: int
+) -> tuple[list[dict[str, Any]], bool]:
+    result: list[dict[str, Any]] = []
+    for item in items[:count]:
+        candidate = result + [item]
+        if (
+            len(
+                json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            )
+            > byte_limit
+        ):
+            break
+        result.append(item)
+    return result, len(result) != len(items)
 
 
-def _project_launch_targets(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    """Project explicit local provider choices for declared tmux locations."""
-
-    projects = {
-        project["projectId"]: project
-        for project in snapshot["projects"]
-        if project.get("declared") is not False
-    }
-    targets: list[dict[str, Any]] = []
-    for location in snapshot["locations"]:
-        if location.get("declared") is False:
-            continue
-        project = projects.get(location["projectId"])
-        if project is None:
-            continue
-        transport = location.get("transportOverride") or project.get("defaultTransport")
-        if transport != "tmux":
-            continue
-        for provider in ("codex", "claude"):
-            targets.append(
+def _adapt_capabilities(source: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_provider = {item["provider"]: item for item in source}
+    result: list[dict[str, Any]] = []
+    for provider in ("codex", "claude"):
+        capability = by_provider.get(provider)
+        if capability is None:
+            result.append(
                 {
-                    "projectId": project["projectId"],
-                    "projectName": project["name"],
-                    "locationId": location["locationId"],
-                    "locationName": location.get("displayName"),
                     "provider": provider,
-                    "isDefault": location.get("isDefault", False),
+                    "status": "neutral",
+                    "available": None,
+                    "features": [],
+                    "degradedReasons": [],
                 }
             )
-    targets.sort(key=_launch_target_sort_key)
-    return targets
-
-
-def _adapt_capability(
-    capabilities: list[dict[str, Any]],
-    provider: str,
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    capability = next(
-        (item for item in capabilities if item["provider"] == provider), None
-    )
-    if capability is None:
-        return (
-            {
-                "provider": provider,
-                "status": "neutral",
-                "available": None,
-                "features": [],
-                "degradedReasons": [],
-            },
-            {
-                "features": _truncation_summary(
-                    source_count=0,
-                    emitted_count=0,
-                    limit=MAX_MODEL_FEATURES,
-                    byte_limit=MAX_MODEL_FEATURE_BYTES,
-                ),
-                "degradedReasons": _truncation_summary(
-                    source_count=0,
-                    emitted_count=0,
-                    limit=MAX_MODEL_DEGRADED_REASONS,
-                    byte_limit=MAX_MODEL_DEGRADED_REASON_BYTES,
-                ),
-            },
-        )
-    result = deepcopy(capability)
-    features = _bounded_encoded_items(
-        capability["features"],
-        count_limit=MAX_MODEL_FEATURES,
-        byte_limit=MAX_MODEL_FEATURE_BYTES,
-    )
-    reasons = _bounded_encoded_items(
-        capability["degradedReasons"],
-        count_limit=MAX_MODEL_DEGRADED_REASONS,
-        byte_limit=MAX_MODEL_DEGRADED_REASON_BYTES,
-    )
-    result["features"] = features
-    result["degradedReasons"] = reasons
-    result["status"] = (
-        "degraded"
-        if not capability["available"] or capability["degradedReasons"]
-        else "available"
-    )
-    return (
-        result,
-        {
-            "features": _truncation_summary(
-                source_count=len(capability["features"]),
-                emitted_count=len(features),
-                limit=MAX_MODEL_FEATURES,
-                byte_limit=MAX_MODEL_FEATURE_BYTES,
-            ),
-            "degradedReasons": _truncation_summary(
-                source_count=len(capability["degradedReasons"]),
-                emitted_count=len(reasons),
-                limit=MAX_MODEL_DEGRADED_REASONS,
-                byte_limit=MAX_MODEL_DEGRADED_REASON_BYTES,
-            ),
-        },
-    )
-
-
-def _relevant_error(error: dict[str, Any]) -> bool:
-    provider = error.get("provider")
-    if provider is not None:
-        return provider in _PROVIDERS
-    session_key = error.get("sessionKey")
-    if session_key is not None:
-        return _session_key(session_key, "model.error.sessionKey")[2] in _PROVIDERS
-    return True
-
-
-def _diagnostics(
-    capabilities: tuple[dict[str, Any], ...],
-    errors: list[dict[str, Any]],
-    capability_truncation: dict[str, dict[str, dict[str, Any]]],
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    candidates: list[dict[str, Any]] = []
-    for capability in capabilities:
-        for reason in capability["degradedReasons"]:
-            warning: dict[str, Any] = {
-                "source": "capability",
-                "provider": capability["provider"],
-                "code": reason["code"],
-                "retryable": reason["retryable"],
-            }
-            if "feature" in reason:
-                warning["feature"] = reason["feature"]
-            candidates.append(warning)
-    relevant_errors = [error for error in errors if _relevant_error(error)]
-    for error in relevant_errors[:MAX_MODEL_ERRORS]:
-        warning = deepcopy(error)
-        warning["source"] = "error"
-        candidates.append(warning)
-    warnings = _bounded_encoded_items(
-        candidates,
-        count_limit=MAX_MODEL_WARNINGS - 3,
-        byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
-    )
-    emitted_errors = sum(warning["source"] == "error" for warning in warnings)
-    diagnostic_truncation = {
-        "codexFeatures": deepcopy(capability_truncation["codex"]["features"]),
-        "codexDegradedReasons": deepcopy(
-            capability_truncation["codex"]["degradedReasons"]
-        ),
-        "claudeFeatures": deepcopy(capability_truncation["claude"]["features"]),
-        "claudeDegradedReasons": deepcopy(
-            capability_truncation["claude"]["degradedReasons"]
-        ),
-        "errors": _truncation_summary(
-            source_count=len(relevant_errors),
-            emitted_count=emitted_errors,
-            limit=MAX_MODEL_ERRORS,
-            byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
-        ),
-        "warnings": _truncation_summary(
-            source_count=(
-                sum(
-                    capability_truncation[provider]["degradedReasons"]["sourceCount"]
-                    for provider in ("codex", "claude")
-                )
-                + len(relevant_errors)
-            ),
-            emitted_count=len(warnings),
-            limit=MAX_MODEL_WARNINGS - 3,
-            byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
-        ),
-    }
-    if any(summary["truncated"] for summary in diagnostic_truncation.values()):
-        warnings.append(
-            {
-                "source": "model",
-                "code": "model_diagnostics_truncated",
-                "message": _MODEL_DIAGNOSTICS_MESSAGE,
-                "retryable": False,
-                "counts": deepcopy(diagnostic_truncation),
-            }
-        )
-    return warnings, diagnostic_truncation
-
-
-def _exact_object(
-    value: object,
-    path: str,
-    *,
-    required: frozenset[str],
-    optional: frozenset[str] = frozenset(),
-) -> dict[str, Any]:
-    table = _object(value, path)
-    unknown = set(table) - required - optional
-    if unknown:
-        raise ProtocolError(f"{path} contains unsupported fields")
-    missing = required - set(table)
-    if missing:
-        raise ProtocolError(f"{path} is missing required fields")
-    return table
-
-
-def _canonical_uuid(value: object, path: str) -> str:
-    canonical = _uuid(value, path)
-    if value != canonical:
-        raise ProtocolError(f"{path} must use canonical UUID spelling")
-    return canonical
-
-
-def _canonical_session_key(value: object, path: str) -> tuple[str, str, str, str]:
-    canonical, host_id, provider, provider_session_id = _session_key(value, path)
-    if value != canonical:
-        raise ProtocolError(f"{path} must use canonical identity spelling")
-    return canonical, host_id, provider, provider_session_id
-
-
-def _nullable_string(value: object, path: str, *, maximum: int) -> str | None:
-    return None if value is None else _string(value, path, maximum=maximum)
-
-
-def _nullable_uuid(value: object, path: str) -> str | None:
-    return None if value is None else _canonical_uuid(value, path)
-
-
-def _nullable_integer(value: object, path: str) -> int | None:
-    return None if value is None else _integer(value, path)
-
-
-def _validate_encoded_limit(value: object, path: str, maximum: int) -> None:
-    try:
-        size = len(
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-        )
-    except (TypeError, ValueError, UnicodeEncodeError) as error:
-        raise ProtocolError(f"{path} contains invalid JSON") from error
-    if size > maximum:
-        raise ProtocolError(f"{path} exceeds its {maximum}-byte limit")
-
-
-def _validate_model_host(value: object) -> str:
-    path = "model.host"
-    table = _exact_object(
-        value,
-        path,
-        required=frozenset({"hostId", "displayName"}),
-    )
-    host_id = _canonical_uuid(table["hostId"], f"{path}.hostId")
-    _string(table["displayName"], f"{path}.displayName", maximum=256)
-    return host_id
-
-
-_MODEL_SESSION_FIELDS = frozenset(
-    {
-        "sessionKey",
-        "hostId",
-        "provider",
-        "providerSessionId",
-        "projectId",
-        "projectName",
-        "locationId",
-        "locationName",
-        "name",
-        "purpose",
-        "cwd",
-        "firstObservedAt",
-        "lastObservedAt",
-        "createdAt",
-        "providerUpdatedAt",
-        "lastActivityAt",
-        "stateObservedAt",
-        "wrappedAt",
-        "recencyAt",
-        "metadataSource",
-        "runtimePresence",
-        "resumability",
-        "activity",
-        "activityReason",
-        "attachment",
-        "stateConfidence",
-        "pinned",
-        "canStop",
-    }
-)
-
-
-def _validate_model_session(value: object, path: str, host_id: str) -> None:
-    table = _exact_object(value, path, required=_MODEL_SESSION_FIELDS)
-    session_key, key_host, key_provider, key_provider_id = _canonical_session_key(
-        table["sessionKey"], f"{path}.sessionKey"
-    )
-    record_host = _canonical_uuid(table["hostId"], f"{path}.hostId")
-    provider = _string(table["provider"], f"{path}.provider", maximum=16)
-    provider_session_id = _canonical_uuid(
-        table["providerSessionId"], f"{path}.providerSessionId"
-    )
-    if (
-        record_host != host_id
-        or key_host != host_id
-        or provider not in _PROVIDERS
-        or key_provider != provider
-        or provider_session_id != key_provider_id
-    ):
-        raise ProtocolError(f"{path} is not a canonical provider identity")
-    if session_key != f"{host_id}:{provider}:{provider_session_id}":
-        raise ProtocolError(f"{path}.sessionKey identity fields disagree")
-
-    _nullable_uuid(table["projectId"], f"{path}.projectId")
-    _nullable_string(table["projectName"], f"{path}.projectName", maximum=256)
-    _nullable_uuid(table["locationId"], f"{path}.locationId")
-    _nullable_string(table["locationName"], f"{path}.locationName", maximum=256)
-    _nullable_string(table["name"], f"{path}.name", maximum=512)
-    _nullable_string(table["purpose"], f"{path}.purpose", maximum=4096)
-    _nullable_string(table["cwd"], f"{path}.cwd", maximum=4096)
-    project_id_present = table["projectId"] is not None
-    project_name_present = table["projectName"] is not None
-    location_id_present = table["locationId"] is not None
-    location_name_present = table["locationName"] is not None
-    if project_id_present != project_name_present:
-        raise ProtocolError(f"{path} project identity and name are inconsistent")
-    if location_name_present and not location_id_present:
-        raise ProtocolError(f"{path}.locationName requires locationId")
-    if location_id_present and not project_id_present:
-        raise ProtocolError(f"{path}.locationId requires projectId")
-
-    first_observed_at = _integer(table["firstObservedAt"], f"{path}.firstObservedAt")
-    last_observed_at = _integer(table["lastObservedAt"], f"{path}.lastObservedAt")
-    if last_observed_at < first_observed_at:
-        raise ProtocolError(f"{path} observation timestamps are reversed")
-    optional_times = {
-        key: _nullable_integer(table[key], f"{path}.{key}")
-        for key in (
-            "createdAt",
-            "providerUpdatedAt",
-            "lastActivityAt",
-            "stateObservedAt",
-            "wrappedAt",
-        )
-    }
-    recency_at = _integer(table["recencyAt"], f"{path}.recencyAt")
-    expected_recency = next(
-        (
-            optional_times[key]
-            for key in ("lastActivityAt", "providerUpdatedAt", "createdAt")
-            if optional_times[key] is not None
-        ),
-        last_observed_at,
-    )
-    if recency_at != expected_recency:
-        raise ProtocolError(f"{path}.recencyAt is inconsistent with session timestamps")
-
-    _string(table["metadataSource"], f"{path}.metadataSource", maximum=64)
-    _enum(table["runtimePresence"], f"{path}.runtimePresence", _RUNTIME_PRESENCE)
-    _enum(table["resumability"], f"{path}.resumability", _RESUMABILITY)
-    _enum(table["activity"], f"{path}.activity", _ACTIVITY)
-    _enum(table["activityReason"], f"{path}.activityReason", _ACTIVITY_REASON)
-    _enum(table["attachment"], f"{path}.attachment", _ATTACHMENT)
-    _enum(table["stateConfidence"], f"{path}.stateConfidence", _STATE_CONFIDENCE)
-    _boolean(table["pinned"], f"{path}.pinned")
-    _boolean(table["canStop"], f"{path}.canStop")
-
-
-_MODEL_LAUNCH_TARGET_FIELDS = frozenset(
-    {
-        "projectId",
-        "projectName",
-        "locationId",
-        "locationName",
-        "provider",
-        "isDefault",
-    }
-)
-
-
-def _validate_model_launch_target(value: object, path: str) -> dict[str, Any]:
-    table = _exact_object(value, path, required=_MODEL_LAUNCH_TARGET_FIELDS)
-    _canonical_uuid(table["projectId"], f"{path}.projectId")
-    _string(table["projectName"], f"{path}.projectName", maximum=256)
-    _canonical_uuid(table["locationId"], f"{path}.locationId")
-    _nullable_string(table["locationName"], f"{path}.locationName", maximum=256)
-    if table["provider"] not in _PROVIDERS:
-        raise ProtocolError(f"{path}.provider is unsupported")
-    _boolean(table["isDefault"], f"{path}.isDefault")
-    return table
-
-
-def _validate_model_degradation(value: object, path: str) -> None:
-    table = _exact_object(
-        value,
-        path,
-        required=frozenset({"code", "message", "retryable"}),
-        optional=frozenset({"feature", "details"}),
-    )
-    _string(table["code"], f"{path}.code", maximum=128)
-    _string(table["message"], f"{path}.message", maximum=2048)
-    _boolean(table["retryable"], f"{path}.retryable")
-    if "feature" in table:
-        _string(table["feature"], f"{path}.feature", maximum=256)
-    if "details" in table:
-        _details(table["details"], f"{path}.details")
-
-
-def _validate_model_capability(
-    value: object, path: str, expected_provider: str
-) -> dict[str, Any]:
-    table = _exact_object(
-        value,
-        path,
-        required=frozenset(
-            {"provider", "status", "available", "features", "degradedReasons"}
-        ),
-        optional=frozenset(
-            {"testedContractRange", "providerVersion", "schemaFingerprint"}
-        ),
-    )
-    if table["provider"] != expected_provider:
-        raise ProtocolError(f"{path}.provider must be {expected_provider}")
-    status = _enum(
-        table["status"],
-        f"{path}.status",
-        frozenset({"neutral", "available", "degraded"}),
-    )
-    features = _array(table["features"], f"{path}.features", maximum=MAX_MODEL_FEATURES)
-    validated_features = [
-        _string(item, f"{path}.features[{index}]", maximum=256)
-        for index, item in enumerate(features)
-    ]
-    if len(validated_features) != len(set(validated_features)):
-        raise ProtocolError(f"{path}.features contains duplicates")
-    _validate_encoded_limit(features, f"{path}.features", MAX_MODEL_FEATURE_BYTES)
-
-    reasons = _array(
-        table["degradedReasons"],
-        f"{path}.degradedReasons",
-        maximum=MAX_MODEL_DEGRADED_REASONS,
-    )
-    for index, reason in enumerate(reasons):
-        _validate_model_degradation(reason, f"{path}.degradedReasons[{index}]")
-    _validate_encoded_limit(
-        reasons, f"{path}.degradedReasons", MAX_MODEL_DEGRADED_REASON_BYTES
-    )
-
-    available = table["available"]
-    if available is None:
-        if (
-            status != "neutral"
-            or features
-            or reasons
-            or set(table)
-            != {"provider", "status", "available", "features", "degradedReasons"}
-        ):
-            raise ProtocolError(f"{path} neutral capability fields are inconsistent")
-        return table
-
-    available = _boolean(available, f"{path}.available")
-    if "testedContractRange" not in table:
-        raise ProtocolError(f"{path}.testedContractRange is required")
-    contract_path = f"{path}.testedContractRange"
-    contract = _exact_object(
-        table["testedContractRange"],
-        contract_path,
-        required=frozenset({"minimum", "maximum"}),
-    )
-    _string(contract["minimum"], f"{contract_path}.minimum", maximum=256)
-    _string(contract["maximum"], f"{contract_path}.maximum", maximum=256)
-    if "providerVersion" in table:
-        _string(table["providerVersion"], f"{path}.providerVersion", maximum=256)
-    if "schemaFingerprint" in table:
-        _hash(table["schemaFingerprint"], f"{path}.schemaFingerprint")
-    expected_status = "degraded" if not available or reasons else "available"
-    if status != expected_status:
-        raise ProtocolError(f"{path}.status is inconsistent with capability state")
-    if not available and not reasons:
-        raise ProtocolError(f"{path}.degradedReasons must explain unavailable provider")
-    return table
-
-
-def _validate_truncation_summary(
-    value: object,
-    path: str,
-    *,
-    expected_limit: int,
-    expected_byte_limit: int,
-    expected_emitted_count: int | None = None,
-    maximum_source_count: int = MAX_JSON_ARRAY_ITEMS,
-) -> dict[str, Any]:
-    table = _exact_object(
-        value,
-        path,
-        required=frozenset(
-            {"truncated", "sourceCount", "emittedCount", "limit", "byteLimit"}
-        ),
-    )
-    truncated = _boolean(table["truncated"], f"{path}.truncated")
-    source_count = _integer(table["sourceCount"], f"{path}.sourceCount")
-    emitted_count = _integer(table["emittedCount"], f"{path}.emittedCount")
-    limit = _integer(table["limit"], f"{path}.limit")
-    byte_limit = _integer(table["byteLimit"], f"{path}.byteLimit")
-    if limit != expected_limit or byte_limit != expected_byte_limit:
-        raise ProtocolError(f"{path} contains incompatible limits")
-    if expected_emitted_count is not None and emitted_count != expected_emitted_count:
-        raise ProtocolError(f"{path}.emittedCount is inconsistent with the model")
-    if emitted_count > limit or source_count < emitted_count:
-        raise ProtocolError(f"{path} contains inconsistent counts")
-    if source_count > 0 and emitted_count == 0:
-        raise ProtocolError(f"{path} cannot omit every bounded source item")
-    if source_count > maximum_source_count:
-        raise ProtocolError(f"{path}.sourceCount exceeds the source collection limit")
-    if truncated is not (emitted_count < source_count):
-        raise ProtocolError(f"{path}.truncated is inconsistent with its counts")
-    return table
-
-
-def _validate_error_warning(value: object, path: str, host_id: str) -> None:
-    table = _exact_object(
-        value,
-        path,
-        required=frozenset(
-            {"source", "code", "message", "scope", "retryable", "observedAt"}
-        ),
-        optional=frozenset({"hostId", "provider", "sessionKey", "details"}),
-    )
-    _string(table["code"], f"{path}.code", maximum=128)
-    _string(table["message"], f"{path}.message", maximum=4096)
-    _enum(table["scope"], f"{path}.scope", _ERROR_SCOPES)
-    _boolean(table["retryable"], f"{path}.retryable")
-    _integer(table["observedAt"], f"{path}.observedAt")
-    if (
-        "hostId" in table
-        and _canonical_uuid(table["hostId"], f"{path}.hostId") != host_id
-    ):
-        raise ProtocolError(f"{path}.hostId belongs to another host")
-    if "provider" in table and table["provider"] not in _PROVIDERS:
-        raise ProtocolError(f"{path}.provider is unsupported")
-    if "sessionKey" in table:
-        _, key_host, key_provider, _ = _canonical_session_key(
-            table["sessionKey"], f"{path}.sessionKey"
-        )
-        if key_host != host_id or key_provider not in _PROVIDERS:
-            raise ProtocolError(
-                f"{path}.sessionKey is not a supported identity on this host"
-            )
-    if "details" in table:
-        _details(table["details"], f"{path}.details")
-
-
-def _validate_model_warnings(
-    warnings: list[Any],
-    *,
-    host_id: str,
-    capabilities: tuple[dict[str, Any], ...],
-    diagnostic_truncation: dict[str, dict[str, Any]],
-    session_truncation: dict[str, Any],
-    launch_target_truncation: dict[str, Any],
-) -> None:
-    expected_capability_warnings: list[dict[str, Any]] = []
-    for capability in capabilities:
-        for reason in capability["degradedReasons"]:
-            warning: dict[str, Any] = {
-                "source": "capability",
-                "provider": capability["provider"],
-                "code": reason["code"],
-                "retryable": reason["retryable"],
-            }
-            if "feature" in reason:
-                warning["feature"] = reason["feature"]
-            expected_capability_warnings.append(warning)
-
-    capability_warnings: list[dict[str, Any]] = []
-    error_count = 0
-    model_warnings: list[dict[str, Any]] = []
-    phase = 0
-    for index, item in enumerate(warnings):
-        path = f"model.warnings[{index}]"
-        table = _object(item, path)
-        source = table.get("source")
-        if source == "capability":
-            if phase != 0:
-                raise ProtocolError("model.warnings sources are not in canonical order")
-            table = _exact_object(
-                table,
-                path,
-                required=frozenset({"source", "provider", "code", "retryable"}),
-                optional=frozenset({"feature"}),
-            )
-            _string(table["code"], f"{path}.code", maximum=128)
-            if table["provider"] not in _PROVIDERS:
-                raise ProtocolError(f"{path}.provider is unsupported")
-            _boolean(table["retryable"], f"{path}.retryable")
-            if "feature" in table:
-                _string(table["feature"], f"{path}.feature", maximum=256)
-            capability_warnings.append(table)
-        elif source == "error":
-            if phase > 1:
-                raise ProtocolError("model.warnings sources are not in canonical order")
-            phase = 1
-            _validate_error_warning(table, path, host_id)
-            error_count += 1
-        elif source == "model":
-            phase = 2
-            model_warnings.append(table)
         else:
-            raise ProtocolError(f"{path}.source has unsupported value")
+            result.append(
+                {
+                    "provider": provider,
+                    "status": "available"
+                    if capability["available"] and not capability["degradedReasons"]
+                    else "degraded",
+                    "available": capability["available"],
+                    "features": capability["features"][:64],
+                    "degradedReasons": capability["degradedReasons"][:64],
+                }
+            )
+    return result
 
-    if capability_warnings != expected_capability_warnings:
-        raise ProtocolError("model capability warnings are inconsistent")
-    if error_count > MAX_MODEL_ERRORS:
-        raise ProtocolError("model contains too many error warnings")
 
-    summaries = diagnostic_truncation
-    capabilities_by_provider = {
-        capability["provider"]: capability for capability in capabilities
+def _validate_model(value: object) -> dict[str, Any]:
+    _validate_json_tree(value, "model")
+    table = _object(value, "model")
+    required = {
+        "modelVersion",
+        "sourceSchemaVersion",
+        "sourceProtocolVersion",
+        "generatedAt",
+        "host",
+        "projects",
+        "tasks",
+        "inboxSessions",
+        "capabilities",
+        "warnings",
+        "truncation",
     }
-    for provider in ("codex", "claude"):
-        capability = capabilities_by_provider[provider]
-        if summaries[f"{provider}Features"]["emittedCount"] != len(
-            capability["features"]
-        ):
-            raise ProtocolError("model feature truncation count is inconsistent")
-        if summaries[f"{provider}DegradedReasons"]["emittedCount"] != len(
-            capability["degradedReasons"]
-        ):
-            raise ProtocolError("model degradation truncation count is inconsistent")
-    if summaries["errors"]["emittedCount"] != error_count:
-        raise ProtocolError("model error truncation count is inconsistent")
-    core_warning_count = len(capability_warnings) + error_count
-    if summaries["warnings"]["emittedCount"] != core_warning_count:
-        raise ProtocolError("model warning truncation count is inconsistent")
-    if summaries["warnings"]["sourceCount"] != (
-        summaries["codexDegradedReasons"]["sourceCount"]
-        + summaries["claudeDegradedReasons"]["sourceCount"]
-        + summaries["errors"]["sourceCount"]
-    ):
-        raise ProtocolError("model warning source count is inconsistent")
-
-    expected_model_warnings: list[dict[str, Any]] = []
-    if any(summary["truncated"] for summary in summaries.values()):
-        expected_model_warnings.append(
-            {
-                "source": "model",
-                "code": "model_diagnostics_truncated",
-                "message": _MODEL_DIAGNOSTICS_MESSAGE,
-                "retryable": False,
-                "counts": deepcopy(summaries),
-            }
-        )
-    if session_truncation["truncated"]:
-        expected_model_warnings.append(
-            {
-                "source": "model",
-                "code": "model_sessions_truncated",
-                "message": _MODEL_SESSIONS_MESSAGE,
-                "retryable": False,
-                "details": {
-                    "emittedCount": session_truncation["emittedCount"],
-                    "retainedCount": session_truncation["sourceCount"],
-                },
-                "limit": session_truncation["limit"],
-                "byteLimit": session_truncation["byteLimit"],
-            }
-        )
-    if launch_target_truncation["truncated"]:
-        expected_model_warnings.append(
-            {
-                "source": "model",
-                "code": "model_launch_targets_truncated",
-                "message": _MODEL_LAUNCH_TARGETS_MESSAGE,
-                "retryable": False,
-                "details": {
-                    "emittedCount": launch_target_truncation["emittedCount"],
-                    "retainedCount": launch_target_truncation["sourceCount"],
-                },
-                "limit": launch_target_truncation["limit"],
-                "byteLimit": launch_target_truncation["byteLimit"],
-            }
-        )
-    if model_warnings != expected_model_warnings:
-        raise ProtocolError("model truncation warnings are inconsistent")
-
-
-def _validate_snapshot_model(value: object) -> None:
-    path = "model"
-    table = _exact_object(
-        value,
-        path,
-        required=frozenset(
-            {
-                "modelVersion",
-                "sourceSchemaVersion",
-                "sourceProtocolVersion",
-                "generatedAt",
-                "host",
-                "sessions",
-                "launchTargets",
-                "capabilities",
-                "warnings",
-                "diagnosticTruncation",
-                "truncation",
-                "launchTargetTruncation",
-            }
-        ),
-    )
+    if set(table) != required:
+        raise ProtocolError("model contains missing or unknown fields")
     for key, expected in (
-        ("modelVersion", 2),
+        ("modelVersion", MODEL_VERSION),
         ("sourceSchemaVersion", SCHEMA_VERSION),
         ("sourceProtocolVersion", PROTOCOL_VERSION),
     ):
-        if _integer(table[key], f"{path}.{key}") != expected:
-            raise ProtocolError(f"{path}.{key} is incompatible")
-    _integer(table["generatedAt"], f"{path}.generatedAt")
-    host_id = _validate_model_host(table["host"])
-
-    sessions = _array(table["sessions"], f"{path}.sessions", maximum=MAX_MODEL_SESSIONS)
-    for index, session in enumerate(sessions):
-        _validate_model_session(session, f"{path}.sessions[{index}]", host_id)
-    session_keys = [session["sessionKey"] for session in sessions]
-    if len(session_keys) != len(set(session_keys)):
-        raise ProtocolError("model.sessions contains duplicate sessionKey values")
-    expected_order = sorted(
-        sessions, key=lambda session: (-session["recencyAt"], session["sessionKey"])
+        if _integer(table[key], f"model.{key}") != expected:
+            raise ProtocolError(f"model.{key} is incompatible")
+    _integer(table["generatedAt"], "model.generatedAt")
+    host = _object(table["host"], "model.host")
+    host_id = _uuid(_required(host, "hostId", "model.host"), "model.host.hostId")
+    _string(
+        _required(host, "displayName", "model.host"),
+        "model.host.displayName",
+        maximum=256,
     )
-    if sessions != expected_order:
-        raise ProtocolError("model.sessions are not in canonical recency order")
-    _validate_encoded_limit(sessions, f"{path}.sessions", MAX_MODEL_SESSION_BYTES)
-
-    launch_targets = _array(
-        table["launchTargets"],
-        f"{path}.launchTargets",
-        maximum=MAX_MODEL_LAUNCH_TARGETS,
+    projects = _array(table["projects"], "model.projects", maximum=MAX_MODEL_PROJECTS)
+    tasks = _array(table["tasks"], "model.tasks", maximum=MAX_MODEL_TASKS)
+    inbox = _array(
+        table["inboxSessions"], "model.inboxSessions", maximum=MAX_MODEL_SESSIONS
     )
-    validated_targets = [
-        _validate_model_launch_target(target, f"{path}.launchTargets[{index}]")
-        for index, target in enumerate(launch_targets)
-    ]
-    provider_locations = [
-        (target["provider"], target["locationId"]) for target in validated_targets
-    ]
-    if len(provider_locations) != len(set(provider_locations)):
-        raise ProtocolError("model.launchTargets contains duplicate provider locations")
-    if launch_targets != sorted(validated_targets, key=_launch_target_sort_key):
-        raise ProtocolError("model.launchTargets are not in canonical order")
-    _validate_encoded_limit(
-        launch_targets,
-        f"{path}.launchTargets",
-        MAX_MODEL_LAUNCH_TARGET_BYTES,
-    )
-
-    raw_capabilities = _array(
-        table["capabilities"], f"{path}.capabilities", maximum=len(_PROVIDERS)
-    )
-    if len(raw_capabilities) != len(_PROVIDERS):
-        raise ProtocolError("model.capabilities must contain both local providers")
-    capabilities = tuple(
-        _validate_model_capability(
-            capability,
-            f"{path}.capabilities[{index}]",
-            provider,
+    _array(table["capabilities"], "model.capabilities", maximum=2)
+    _array(table["warnings"], "model.warnings", maximum=MAX_MODEL_WARNINGS)
+    _object(table["truncation"], "model.truncation")
+    project_ids: set[str] = set()
+    for index, item in enumerate(projects):
+        row = _object(item, f"model.projects[{index}]")
+        if set(row) != {
+            "projectId",
+            "name",
+            "repositoryName",
+            "defaultProvider",
+            "defaultCheckoutId",
+        }:
+            raise ProtocolError("model project contains missing or unknown fields")
+        project_id = _uuid(
+            _required(row, "projectId", f"model.projects[{index}]"),
+            f"model.projects[{index}].projectId",
         )
-        for index, (capability, provider) in enumerate(
-            zip(raw_capabilities, ("codex", "claude"), strict=True)
+        if project_id in project_ids:
+            raise ProtocolError("model.projects contains duplicate projectId values")
+        project_ids.add(project_id)
+        _string(
+            _required(row, "name", f"model.projects[{index}]"),
+            f"model.projects[{index}].name",
+            maximum=256,
         )
-    )
-    warnings = _array(table["warnings"], f"{path}.warnings", maximum=MAX_MODEL_WARNINGS)
-    _validate_encoded_limit(warnings, f"{path}.warnings", MAX_MODEL_WARNING_BYTES)
-
-    diagnostic_table = _exact_object(
-        table["diagnosticTruncation"],
-        f"{path}.diagnosticTruncation",
-        required=frozenset(
-            {
-                "codexFeatures",
-                "codexDegradedReasons",
-                "claudeFeatures",
-                "claudeDegradedReasons",
-                "errors",
-                "warnings",
-            }
-        ),
-    )
-    diagnostic_truncation = {
-        **{
-            f"{provider}{kind}": _validate_truncation_summary(
-                diagnostic_table[f"{provider}{kind}"],
-                f"{path}.diagnosticTruncation.{provider}{kind}",
-                expected_limit=(
-                    MAX_MODEL_FEATURES
-                    if kind == "Features"
-                    else MAX_MODEL_DEGRADED_REASONS
-                ),
-                expected_byte_limit=(
-                    MAX_MODEL_FEATURE_BYTES
-                    if kind == "Features"
-                    else MAX_MODEL_DEGRADED_REASON_BYTES
-                ),
+        _optional_string(row, "repositoryName", f"model.projects[{index}]", maximum=256)
+        _provider(
+            _required(row, "defaultProvider", f"model.projects[{index}]"),
+            f"model.projects[{index}].defaultProvider",
+        )
+        _optional_uuid(row, "defaultCheckoutId", f"model.projects[{index}]")
+    task_ids: set[str] = set()
+    for index, item in enumerate(tasks):
+        row = _object(item, f"model.tasks[{index}]")
+        expected_task_fields = {
+            "taskId",
+            "projectId",
+            "projectName",
+            "checkoutId",
+            "checkoutName",
+            "checkoutKind",
+            "checkoutBranch",
+            "checkoutIsDefault",
+            "title",
+            "purpose",
+            "preferredProvider",
+            "status",
+            "pinned",
+            "currentSessionKey",
+            "createdAt",
+            "updatedAt",
+            "closedAt",
+            "provider",
+            "runtimePresence",
+            "resumability",
+            "activity",
+            "activityReason",
+            "attachment",
+            "stateConfidence",
+            "recencyAt",
+            "canStop",
+        }
+        if set(row) != expected_task_fields:
+            raise ProtocolError("model task contains missing or unknown fields")
+        task_id = _uuid(
+            _required(row, "taskId", f"model.tasks[{index}]"),
+            f"model.tasks[{index}].taskId",
+        )
+        if (
+            task_id in task_ids
+            or _uuid(
+                _required(row, "projectId", f"model.tasks[{index}]"),
+                f"model.tasks[{index}].projectId",
             )
-            for provider in ("codex", "claude")
-            for kind in ("Features", "DegradedReasons")
-        },
-        "errors": _validate_truncation_summary(
-            diagnostic_table["errors"],
-            f"{path}.diagnosticTruncation.errors",
-            expected_limit=MAX_MODEL_ERRORS,
-            expected_byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
-            maximum_source_count=MAX_SNAPSHOT_RECORDS,
-        ),
-        "warnings": _validate_truncation_summary(
-            diagnostic_table["warnings"],
-            f"{path}.diagnosticTruncation.warnings",
-            expected_limit=MAX_MODEL_WARNINGS - 3,
-            expected_byte_limit=MAX_MODEL_WARNING_BYTES - 16 * 1024,
-            maximum_source_count=MAX_JSON_ARRAY_ITEMS * 2,
-        ),
+            not in project_ids
+        ):
+            raise ProtocolError("model task identities are inconsistent")
+        task_ids.add(task_id)
+        _string(
+            _required(row, "title", f"model.tasks[{index}]"),
+            f"model.tasks[{index}].title",
+            maximum=256,
+        )
+        _string(
+            _required(row, "projectName", f"model.tasks[{index}]"),
+            f"model.tasks[{index}].projectName",
+            maximum=256,
+        )
+        _optional_uuid(row, "checkoutId", f"model.tasks[{index}]")
+        _optional_string(row, "checkoutName", f"model.tasks[{index}]", maximum=256)
+        if row["checkoutKind"] is not None:
+            _enum(
+                row["checkoutKind"],
+                f"model.tasks[{index}].checkoutKind",
+                _CHECKOUT_KINDS,
+            )
+        _optional_string(row, "checkoutBranch", f"model.tasks[{index}]", maximum=1024)
+        _boolean(row["checkoutIsDefault"], f"model.tasks[{index}].checkoutIsDefault")
+        _optional_string(row, "purpose", f"model.tasks[{index}]", maximum=4096)
+        if row["preferredProvider"] is not None:
+            _provider(
+                row["preferredProvider"], f"model.tasks[{index}].preferredProvider"
+            )
+        status = _enum(
+            _required(row, "status", f"model.tasks[{index}]"),
+            f"model.tasks[{index}].status",
+            _TASK_STATUSES,
+        )
+        _boolean(row["pinned"], f"model.tasks[{index}].pinned")
+        if row["currentSessionKey"] is not None:
+            _, current_host, current_provider, _ = _session_key(
+                row["currentSessionKey"], f"model.tasks[{index}].currentSessionKey"
+            )
+            if current_host != host_id or row["provider"] != current_provider:
+                raise ProtocolError("model task current session identity disagrees")
+        elif row["provider"] is not None:
+            raise ProtocolError("model task provider requires a current session")
+        _integer(row["createdAt"], f"model.tasks[{index}].createdAt")
+        _integer(row["updatedAt"], f"model.tasks[{index}].updatedAt")
+        if row["closedAt"] is not None:
+            _integer(row["closedAt"], f"model.tasks[{index}].closedAt")
+        if (status == "closed") != (row["closedAt"] is not None):
+            raise ProtocolError("model task closedAt disagrees with status")
+        if row["provider"] is not None:
+            _provider(row["provider"], f"model.tasks[{index}].provider")
+        _enum(
+            row["runtimePresence"],
+            f"model.tasks[{index}].runtimePresence",
+            _RUNTIME_PRESENCE,
+        )
+        _enum(row["resumability"], f"model.tasks[{index}].resumability", _RESUMABILITY)
+        _enum(row["activity"], f"model.tasks[{index}].activity", _ACTIVITY)
+        _enum(
+            row["activityReason"],
+            f"model.tasks[{index}].activityReason",
+            _ACTIVITY_REASON,
+        )
+        _enum(row["attachment"], f"model.tasks[{index}].attachment", _ATTACHMENT)
+        _enum(
+            row["stateConfidence"],
+            f"model.tasks[{index}].stateConfidence",
+            _STATE_CONFIDENCE,
+        )
+        _integer(row["recencyAt"], f"model.tasks[{index}].recencyAt")
+        _boolean(row["canStop"], f"model.tasks[{index}].canStop")
+        if row["canStop"] and (
+            row["provider"] != "claude" or row["runtimePresence"] != "live"
+        ):
+            raise ProtocolError("model task stop capability is inconsistent")
+    session_keys: set[str] = set()
+    for index, item in enumerate(inbox):
+        row = _object(item, f"model.inboxSessions[{index}]")
+        expected_inbox_fields = {
+            "sessionKey",
+            "providerSessionId",
+            "provider",
+            "projectId",
+            "projectName",
+            "checkoutId",
+            "checkoutName",
+            "name",
+            "runtimePresence",
+            "resumability",
+            "activity",
+            "activityReason",
+            "attachment",
+            "stateConfidence",
+            "recencyAt",
+            "canStop",
+        }
+        if set(row) != expected_inbox_fields:
+            raise ProtocolError(
+                "model Inbox session contains missing or unknown fields"
+            )
+        key, key_host, key_provider, key_provider_id = _session_key(
+            _required(row, "sessionKey", f"model.inboxSessions[{index}]"),
+            f"model.inboxSessions[{index}].sessionKey",
+        )
+        if key_host != host_id or key in session_keys:
+            raise ProtocolError("model Inbox session identities are inconsistent")
+        session_keys.add(key)
+        provider_id = _uuid(
+            row["providerSessionId"], f"model.inboxSessions[{index}].providerSessionId"
+        )
+        provider = _provider(row["provider"], f"model.inboxSessions[{index}].provider")
+        if provider != key_provider or provider_id != key_provider_id:
+            raise ProtocolError("model Inbox session identity fields disagree")
+        _optional_uuid(row, "projectId", f"model.inboxSessions[{index}]")
+        _optional_string(
+            row, "projectName", f"model.inboxSessions[{index}]", maximum=256
+        )
+        _optional_uuid(row, "checkoutId", f"model.inboxSessions[{index}]")
+        _optional_string(
+            row, "checkoutName", f"model.inboxSessions[{index}]", maximum=256
+        )
+        _optional_string(row, "name", f"model.inboxSessions[{index}]", maximum=512)
+        _enum(
+            row["runtimePresence"],
+            f"model.inboxSessions[{index}].runtimePresence",
+            _RUNTIME_PRESENCE,
+        )
+        _enum(
+            row["resumability"],
+            f"model.inboxSessions[{index}].resumability",
+            _RESUMABILITY,
+        )
+        _enum(row["activity"], f"model.inboxSessions[{index}].activity", _ACTIVITY)
+        _enum(
+            row["activityReason"],
+            f"model.inboxSessions[{index}].activityReason",
+            _ACTIVITY_REASON,
+        )
+        _enum(
+            row["attachment"], f"model.inboxSessions[{index}].attachment", _ATTACHMENT
+        )
+        _enum(
+            row["stateConfidence"],
+            f"model.inboxSessions[{index}].stateConfidence",
+            _STATE_CONFIDENCE,
+        )
+        _integer(row["recencyAt"], f"model.inboxSessions[{index}].recencyAt")
+        _boolean(row["canStop"], f"model.inboxSessions[{index}].canStop")
+        if row["canStop"] and (
+            provider != "claude" or row["runtimePresence"] != "live"
+        ):
+            raise ProtocolError("model Inbox stop capability is inconsistent")
+    capabilities = _array(table["capabilities"], "model.capabilities", maximum=2)
+    if len(capabilities) != 2:
+        raise ProtocolError("model capabilities must contain both providers")
+    for index, provider in enumerate(("codex", "claude")):
+        capability = _object(capabilities[index], f"model.capabilities[{index}]")
+        if (
+            set(capability)
+            != {"provider", "status", "available", "features", "degradedReasons"}
+            or capability["provider"] != provider
+        ):
+            raise ProtocolError("model capability order or fields are invalid")
+        status = _enum(
+            capability["status"],
+            f"model.capabilities[{index}].status",
+            frozenset({"available", "degraded", "neutral"}),
+        )
+        available = capability["available"]
+        if available is not None:
+            _boolean(available, f"model.capabilities[{index}].available")
+        features = _array(
+            capability["features"], f"model.capabilities[{index}].features", maximum=64
+        )
+        for feature_index, feature in enumerate(features):
+            _string(
+                feature,
+                f"model.capabilities[{index}].features[{feature_index}]",
+                maximum=256,
+            )
+        reasons = _array(
+            capability["degradedReasons"],
+            f"model.capabilities[{index}].degradedReasons",
+            maximum=64,
+        )
+        for reason_index, reason in enumerate(reasons):
+            reason_path = f"model.capabilities[{index}].degradedReasons[{reason_index}]"
+            reason_table = _object(reason, reason_path)
+            if not set(reason_table).issubset(
+                {"code", "message", "retryable", "feature", "details"}
+            ):
+                raise ProtocolError("model capability reason fields are invalid")
+            _degradation(reason_table, reason_path)
+        expected_status = (
+            "neutral"
+            if available is None
+            else "available"
+            if available and not reasons
+            else "degraded"
+        )
+        if status != expected_status:
+            raise ProtocolError("model capability status is inconsistent")
+    warnings = _array(table["warnings"], "model.warnings", maximum=MAX_MODEL_WARNINGS)
+    for index, warning in enumerate(warnings):
+        path = f"model.warnings[{index}]"
+        row = _object(warning, path)
+        if not set(row).issubset(
+            {"source", "provider", "code", "message", "retryable"}
+        ) or not {"source", "code", "message", "retryable"}.issubset(row):
+            raise ProtocolError("model warning fields are invalid")
+        _enum(
+            row["source"],
+            f"{path}.source",
+            frozenset({"capability", "error", "model"}),
+        )
+        _string(row["code"], f"{path}.code", maximum=128)
+        _string(row["message"], f"{path}.message", maximum=4096)
+        _boolean(row["retryable"], f"{path}.retryable")
+        if row.get("provider") is not None:
+            _provider(row["provider"], f"{path}.provider")
+    truncation = _object(table["truncation"], "model.truncation")
+    expected_truncation = {
+        "sourceTaskCount",
+        "emittedTaskCount",
+        "tasksTruncated",
+        "sourceInboxCount",
+        "emittedInboxCount",
+        "inboxTruncated",
+        "sessionLimit",
     }
-    for capability in capabilities:
-        if capability["available"] is None:
-            provider = capability["provider"]
-            for kind in ("Features", "DegradedReasons"):
-                summary = diagnostic_truncation[f"{provider}{kind}"]
-                if summary["sourceCount"] != 0 or summary["emittedCount"] != 0:
-                    raise ProtocolError(
-                        "model neutral capability cannot claim source diagnostics"
-                    )
-
-    truncation_table = _object(table["truncation"], f"{path}.truncation")
-    session_limit = _integer(
-        _required(truncation_table, "limit", f"{path}.truncation"),
-        f"{path}.truncation.limit",
-    )
-    if not 1 <= session_limit <= MAX_MODEL_SESSIONS:
-        raise ProtocolError("model.truncation.limit is outside the model bounds")
-    session_truncation = _validate_truncation_summary(
-        truncation_table,
-        f"{path}.truncation",
-        expected_limit=session_limit,
-        expected_byte_limit=MAX_MODEL_SESSION_BYTES,
-        expected_emitted_count=len(sessions),
-        maximum_source_count=MAX_SNAPSHOT_RECORDS,
-    )
-    launch_target_truncation = _validate_truncation_summary(
-        table["launchTargetTruncation"],
-        f"{path}.launchTargetTruncation",
-        expected_limit=MAX_MODEL_LAUNCH_TARGETS,
-        expected_byte_limit=MAX_MODEL_LAUNCH_TARGET_BYTES,
-        expected_emitted_count=len(launch_targets),
-        maximum_source_count=MAX_SNAPSHOT_RECORDS,
-    )
-    _validate_model_warnings(
-        warnings,
-        host_id=host_id,
-        capabilities=capabilities,
-        diagnostic_truncation=diagnostic_truncation,
-        session_truncation=session_truncation,
-        launch_target_truncation=launch_target_truncation,
-    )
-
-
-def _model_collection(value: object, path: str) -> list[Any]:
-    if not isinstance(value, (list, tuple)):
-        raise ProtocolError(f"{path} must be an array collection")
-    return deepcopy(list(value))
+    if set(truncation) != expected_truncation:
+        raise ProtocolError("model truncation fields are invalid")
+    for key in (
+        "sourceTaskCount",
+        "emittedTaskCount",
+        "sourceInboxCount",
+        "emittedInboxCount",
+        "sessionLimit",
+    ):
+        _integer(truncation[key], f"model.truncation.{key}")
+    for key in ("tasksTruncated", "inboxTruncated"):
+        _boolean(truncation[key], f"model.truncation.{key}")
+    if (
+        truncation["emittedTaskCount"] != len(tasks)
+        or truncation["emittedInboxCount"] != len(inbox)
+        or truncation["emittedTaskCount"] > truncation["sourceTaskCount"]
+        or truncation["emittedInboxCount"] > truncation["sourceInboxCount"]
+        or truncation["emittedInboxCount"] > truncation["sessionLimit"]
+        or truncation["tasksTruncated"]
+        != (truncation["emittedTaskCount"] < truncation["sourceTaskCount"])
+        or truncation["inboxTruncated"]
+        != (truncation["emittedInboxCount"] < truncation["sourceInboxCount"])
+    ):
+        raise ProtocolError("model truncation counts are inconsistent")
+    encoded = json.dumps(
+        table, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    ).encode("utf-8")
+    if len(encoded) > MAX_MODEL_BYTES:
+        raise ProtocolError("model exceeds the encoded byte limit")
+    return table
 
 
 @dataclass(slots=True)
 class SnapshotModel:
-    """Small, deterministic local-provider model safe for a DMS bridge."""
-
     generated_at: int
     host: dict[str, Any]
-    sessions: tuple[dict[str, Any], ...]
-    launch_targets: tuple[dict[str, Any], ...]
-    capabilities: tuple[dict[str, Any], ...]
-    warnings: tuple[dict[str, Any], ...]
-    diagnostic_truncation: dict[str, dict[str, Any]]
-    source_session_count: int
-    session_limit: int
-    source_launch_target_count: int
+    projects: list[dict[str, Any]]
+    tasks: list[dict[str, Any]]
+    inbox_sessions: list[dict[str, Any]]
+    capabilities: list[dict[str, Any]]
+    warnings: list[dict[str, Any]]
+    truncation: dict[str, Any]
 
     @property
-    def truncated(self) -> bool:
-        return len(self.sessions) < self.source_session_count
+    def sessions(self) -> tuple[dict[str, Any], ...]:
+        """Compatibility accessor for callers that only need Inbox sessions."""
 
-    @property
-    def launch_targets_truncated(self) -> bool:
-        return len(self.launch_targets) < self.source_launch_target_count
-
-    @property
-    def codex_capability(self) -> dict[str, Any]:
-        return self.capabilities[0]
-
-    @property
-    def claude_capability(self) -> dict[str, Any]:
-        return self.capabilities[1]
+        return tuple(self.inbox_sessions)
 
     def to_dict(self) -> dict[str, Any]:
-        session_truncation = _truncation_summary(
-            source_count=self.source_session_count,
-            emitted_count=len(self.sessions),
-            limit=self.session_limit,
-            byte_limit=MAX_MODEL_SESSION_BYTES,
-        )
-        launch_target_truncation = _truncation_summary(
-            source_count=self.source_launch_target_count,
-            emitted_count=len(self.launch_targets),
-            limit=MAX_MODEL_LAUNCH_TARGETS,
-            byte_limit=MAX_MODEL_LAUNCH_TARGET_BYTES,
-        )
-        value: dict[str, Any] = {
-            "modelVersion": 2,
+        value = {
+            "modelVersion": MODEL_VERSION,
             "sourceSchemaVersion": SCHEMA_VERSION,
             "sourceProtocolVersion": PROTOCOL_VERSION,
             "generatedAt": self.generated_at,
             "host": deepcopy(self.host),
-            "sessions": _model_collection(self.sessions, "model.sessions"),
-            "launchTargets": _model_collection(
-                self.launch_targets, "model.launchTargets"
-            ),
-            "capabilities": _model_collection(self.capabilities, "model.capabilities"),
-            "warnings": _model_collection(self.warnings, "model.warnings"),
-            "diagnosticTruncation": deepcopy(self.diagnostic_truncation),
-            "truncation": session_truncation,
-            "launchTargetTruncation": launch_target_truncation,
+            "projects": deepcopy(self.projects),
+            "tasks": deepcopy(self.tasks),
+            "inboxSessions": deepcopy(self.inbox_sessions),
+            "capabilities": deepcopy(self.capabilities),
+            "warnings": deepcopy(self.warnings),
+            "truncation": deepcopy(self.truncation),
         }
-        _validate_json_tree(value, "model")
-        _validate_snapshot_model(value)
-        try:
-            encoded = json.dumps(
-                value,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-        except (TypeError, ValueError, UnicodeEncodeError) as error:
-            raise ProtocolError("projected model contains invalid JSON") from error
-        if len(encoded) > MAX_JSON_BYTES:
-            raise ProtocolError(
-                f"projected model exceeds the {MAX_JSON_BYTES}-byte limit"
-            )
-        return value
-
-    def to_json(self) -> str:
-        value = self.to_dict()
-        try:
-            encoded = json.dumps(
-                value,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-        except (TypeError, ValueError, UnicodeEncodeError) as error:
-            raise ProtocolError("projected model contains invalid JSON") from error
-        return encoded.decode("utf-8")
-
-
-def _build_model(
-    snapshot: dict[str, Any],
-    sessions: list[dict[str, Any]],
-    launch_targets: list[dict[str, Any]],
-    *,
-    source_count: int,
-    source_launch_target_count: int,
-    limit: int,
-) -> SnapshotModel:
-    adapted = tuple(
-        _adapt_capability(snapshot["capabilities"], provider)
-        for provider in ("codex", "claude")
-    )
-    capabilities = tuple(item[0] for item in adapted)
-    capability_truncation = {
-        provider: adapted[index][1]
-        for index, provider in enumerate(("codex", "claude"))
-    }
-    warnings, diagnostic_truncation = _diagnostics(
-        capabilities, snapshot["errors"], capability_truncation
-    )
-    if len(sessions) < source_count:
-        warnings.append(
-            {
-                "source": "model",
-                "code": "model_sessions_truncated",
-                "message": _MODEL_SESSIONS_MESSAGE,
-                "retryable": False,
-                "details": {
-                    "emittedCount": len(sessions),
-                    "retainedCount": source_count,
-                },
-                "limit": limit,
-                "byteLimit": MAX_MODEL_SESSION_BYTES,
-            }
-        )
-    if len(launch_targets) < source_launch_target_count:
-        warnings.append(
-            {
-                "source": "model",
-                "code": "model_launch_targets_truncated",
-                "message": _MODEL_LAUNCH_TARGETS_MESSAGE,
-                "retryable": False,
-                "details": {
-                    "emittedCount": len(launch_targets),
-                    "retainedCount": source_launch_target_count,
-                },
-                "limit": MAX_MODEL_LAUNCH_TARGETS,
-                "byteLimit": MAX_MODEL_LAUNCH_TARGET_BYTES,
-            }
-        )
-    return SnapshotModel(
-        generated_at=snapshot["generatedAt"],
-        host=deepcopy(snapshot["host"]),
-        sessions=tuple(deepcopy(sessions)),
-        launch_targets=tuple(deepcopy(launch_targets)),
-        capabilities=capabilities,
-        warnings=tuple(warnings),
-        diagnostic_truncation=diagnostic_truncation,
-        source_session_count=source_count,
-        session_limit=limit,
-        source_launch_target_count=source_launch_target_count,
-    )
+        return deepcopy(_validate_model(value))
 
 
 def parse_snapshot(
     raw: str | bytes | bytearray, *, max_sessions: int = MAX_MODEL_SESSIONS
 ) -> SnapshotModel:
-    """Validate Snapshot v1 and project a bounded deterministic local model."""
-
     if (
         isinstance(max_sessions, bool)
         or not isinstance(max_sessions, int)
@@ -2303,34 +1630,234 @@ def parse_snapshot(
     ):
         raise ValueError(f"max_sessions must be between 1 and {MAX_MODEL_SESSIONS}")
     snapshot = _validated_snapshot(raw)
-    projects = {project["projectId"]: project for project in snapshot["projects"]}
-    locations = {location["locationId"]: location for location in snapshot["locations"]}
-    surfaces = {surface["surfaceId"]: surface for surface in snapshot["surfaces"]}
-    projected = [
-        _project_session(session, projects, locations, surfaces)
-        for session in snapshot["sessions"]
-        if session["provider"] in _PROVIDERS
+    projects_by_id = {item["projectId"]: item for item in snapshot["projects"]}
+    repositories_by_id = {
+        item["repositoryId"]: item for item in snapshot["repositories"]
+    }
+    checkouts_by_id = {item["checkoutId"]: item for item in snapshot["checkouts"]}
+    surfaces_by_id = {item["surfaceId"]: item for item in snapshot["surfaces"]}
+    sessions_by_key = {item["sessionKey"]: item for item in snapshot["sessions"]}
+    primary_repository: dict[str, str] = {
+        item["projectId"]: item["repositoryId"]
+        for item in snapshot["projectRepositories"]
+        if item["isPrimary"]
+    }
+    default_checkout: dict[str, dict[str, Any]] = {}
+    for project_id, repository_id in primary_repository.items():
+        candidates = [
+            checkout
+            for checkout in snapshot["checkouts"]
+            if checkout["repositoryId"] == repository_id
+            and checkout["isDefault"]
+            and checkout["declared"]
+        ]
+        if candidates:
+            default_checkout[project_id] = sorted(
+                candidates, key=lambda item: item["checkoutId"]
+            )[0]
+
+    all_project_rows: list[dict[str, Any]] = []
+    for project in snapshot["projects"]:
+        if not project["declared"]:
+            continue
+        checkout = default_checkout.get(project["projectId"])
+        repository = repositories_by_id.get(
+            primary_repository.get(project["projectId"], "")
+        )
+        all_project_rows.append(
+            {
+                "projectId": project["projectId"],
+                "name": project["name"],
+                "repositoryName": None if repository is None else repository["name"],
+                "defaultProvider": project["defaultProvider"] or "codex",
+                "defaultCheckoutId": None
+                if checkout is None
+                else checkout["checkoutId"],
+            }
+        )
+    all_project_rows.sort(key=lambda item: (item["name"].casefold(), item["projectId"]))
+
+    task_rows: list[dict[str, Any]] = []
+    for task in snapshot["tasks"]:
+        project = projects_by_id[task["projectId"]]
+        checkout = checkouts_by_id.get(task["checkoutId"])
+        current = sessions_by_key.get(task["currentSessionKey"])
+        state = None if current is None else _session_state(current, surfaces_by_id)
+        row = {
+            "taskId": task["taskId"],
+            "projectId": task["projectId"],
+            "projectName": project["name"],
+            "checkoutId": task["checkoutId"],
+            "checkoutName": None if checkout is None else checkout["displayName"],
+            "checkoutKind": None if checkout is None else checkout["kind"],
+            "checkoutBranch": None if checkout is None else checkout["branch"],
+            "checkoutIsDefault": False if checkout is None else checkout["isDefault"],
+            "title": task["title"],
+            "purpose": task["purpose"],
+            "preferredProvider": task["preferredProvider"],
+            "status": task["status"],
+            "pinned": task["pinned"],
+            "currentSessionKey": task["currentSessionKey"],
+            "createdAt": task["createdAt"],
+            "updatedAt": task["updatedAt"],
+            "closedAt": task["closedAt"],
+            "provider": None if state is None else state["provider"],
+            "runtimePresence": "unknown" if state is None else state["runtimePresence"],
+            "resumability": "unknown" if state is None else state["resumability"],
+            "activity": "unknown" if state is None else state["activity"],
+            "activityReason": "unknown" if state is None else state["activityReason"],
+            "attachment": "unknown" if state is None else state["attachment"],
+            "stateConfidence": "unknown" if state is None else state["stateConfidence"],
+            "recencyAt": task["updatedAt"] if state is None else state["recencyAt"],
+            "canStop": False if state is None else state["canStop"],
+        }
+        task_rows.append(row)
+    task_rows.sort(
+        key=lambda item: (
+            item["status"] == "closed",
+            not item["pinned"],
+            -item["recencyAt"],
+            item["taskId"],
+        )
+    )
+    task_rows, tasks_truncated = _bounded(
+        task_rows, count=MAX_MODEL_TASKS, byte_limit=MAX_MODEL_TASK_BYTES
+    )
+    project_rows_by_id = {item["projectId"]: item for item in all_project_rows}
+    required_project_ids = list(
+        dict.fromkeys(
+            item["projectId"]
+            for item in task_rows
+            if item["projectId"] in project_rows_by_id
+        )
+    )
+    required_project_id_set = set(required_project_ids)
+    project_candidates = [
+        project_rows_by_id[project_id] for project_id in required_project_ids
+    ] + [
+        item
+        for item in all_project_rows
+        if item["projectId"] not in required_project_id_set
     ]
-    projected.sort(key=lambda session: (-session["recencyAt"], session["sessionKey"]))
-    source_count = len(projected)
-    selected = _bounded_encoded_items(
-        projected,
-        count_limit=max_sessions,
-        byte_limit=MAX_MODEL_SESSION_BYTES,
+    project_rows, projects_truncated = _bounded(
+        project_candidates,
+        count=MAX_MODEL_PROJECTS,
+        byte_limit=MAX_MODEL_PROJECT_BYTES,
     )
-    launch_targets = _project_launch_targets(snapshot)
-    selected_launch_targets = _bounded_encoded_items(
-        launch_targets,
-        count_limit=MAX_MODEL_LAUNCH_TARGETS,
-        byte_limit=MAX_MODEL_LAUNCH_TARGET_BYTES,
+    emitted_project_ids = {item["projectId"] for item in project_rows}
+    retained_task_rows = [
+        item for item in task_rows if item["projectId"] in emitted_project_ids
+    ]
+    tasks_truncated = tasks_truncated or len(retained_task_rows) != len(task_rows)
+    task_rows = retained_task_rows
+    project_rows.sort(key=lambda item: (item["name"].casefold(), item["projectId"]))
+
+    inbox_rows: list[dict[str, Any]] = []
+    for session in snapshot["sessions"]:
+        if session["taskId"] is not None:
+            continue
+        project = projects_by_id.get(session["projectId"])
+        checkout = checkouts_by_id.get(session["checkoutId"])
+        row = {
+            "sessionKey": session["sessionKey"],
+            "providerSessionId": session["providerSessionId"],
+            "provider": session["provider"],
+            "projectId": session["projectId"],
+            "projectName": None if project is None else project["name"],
+            "checkoutId": session["checkoutId"],
+            "checkoutName": None if checkout is None else checkout["displayName"],
+            "name": session["name"],
+            **_session_state(session, surfaces_by_id),
+        }
+        inbox_rows.append(row)
+    inbox_rows.sort(key=lambda item: (-item["recencyAt"], item["sessionKey"]))
+    inbox_rows, inbox_truncated = _bounded(
+        inbox_rows, count=max_sessions, byte_limit=MAX_MODEL_INBOX_BYTES
     )
-    model = _build_model(
-        snapshot,
-        selected,
-        selected_launch_targets,
-        source_count=source_count,
-        source_launch_target_count=len(launch_targets),
-        limit=max_sessions,
+
+    warnings: list[dict[str, Any]] = []
+    for capability in snapshot["capabilities"]:
+        for reason in capability["degradedReasons"]:
+            warnings.append(
+                {
+                    "source": "capability",
+                    "provider": capability["provider"],
+                    "code": reason["code"],
+                    "message": reason["message"],
+                    "retryable": reason["retryable"],
+                }
+            )
+    for error in snapshot["errors"]:
+        warnings.append(
+            {
+                "source": "error",
+                "code": error["code"],
+                "message": error["message"],
+                "retryable": error["retryable"],
+                "provider": error.get("provider"),
+            }
+        )
+    warnings, diagnostics_truncated = _bounded(
+        warnings,
+        count=MAX_MODEL_WARNINGS - 4,
+        byte_limit=MAX_MODEL_WARNING_BYTES,
     )
-    model.to_json()
+    if diagnostics_truncated:
+        warnings.append(
+            {
+                "source": "model",
+                "code": "model_diagnostics_truncated",
+                "message": "The frontend model omitted diagnostics to remain bounded.",
+                "retryable": False,
+            }
+        )
+    if projects_truncated:
+        warnings.append(
+            {
+                "source": "model",
+                "code": "model_projects_truncated",
+                "message": "The frontend model omitted projects to remain bounded.",
+                "retryable": False,
+            }
+        )
+    if tasks_truncated:
+        warnings.append(
+            {
+                "source": "model",
+                "code": "model_tasks_truncated",
+                "message": "The frontend model omitted tasks to remain bounded.",
+                "retryable": False,
+            }
+        )
+    if inbox_truncated:
+        warnings.append(
+            {
+                "source": "model",
+                "code": "model_inbox_truncated",
+                "message": "The frontend model omitted Inbox sessions to remain bounded.",
+                "retryable": False,
+            }
+        )
+
+    model = SnapshotModel(
+        generated_at=snapshot["generatedAt"],
+        host=snapshot["host"],
+        projects=project_rows,
+        tasks=task_rows,
+        inbox_sessions=inbox_rows,
+        capabilities=_adapt_capabilities(snapshot["capabilities"]),
+        warnings=warnings,
+        truncation={
+            "sourceTaskCount": len(snapshot["tasks"]),
+            "emittedTaskCount": len(task_rows),
+            "tasksTruncated": tasks_truncated,
+            "sourceInboxCount": sum(
+                session["taskId"] is None for session in snapshot["sessions"]
+            ),
+            "emittedInboxCount": len(inbox_rows),
+            "inboxTruncated": inbox_truncated,
+            "sessionLimit": max_sessions,
+        },
+    )
+    model.to_dict()
     return model

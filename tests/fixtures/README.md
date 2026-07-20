@@ -1,14 +1,16 @@
-# Snapshot v1 fixture
+# Snapshot v2 fixtures
 
-`snapshot-v1.json` is copied byte-for-byte from the
-`byebyebryan/agent-switchboard` repository at:
+`snapshot-v2.json` is synthetic test data adapted from the public
+`byebyebryan/agent-switchboard` fixture at:
 
-`tests/fixtures/protocol/v1/snapshot.json`
+`tests/fixtures/protocol/v2/snapshot.json`
 
-The fixture is synthetic test data, not a capture of a live machine or user
-session. Its protocol provenance is Agent Switchboard commits
-`898fa1080712235993781c27c56d312e8e3cef9e` and
-`b3b54b4dc1eea5a5b0bd78792fa6c7f626701a8f`.
+It adds a closed task and an unassigned Claude session so the DMS model can
+exercise open-task, Closed, Inbox, provider-icon, and safe-stop behavior. It is
+not a capture of a live machine or user session.
 
 SHA-256:
-`fd3146e6f62eff8fe607227a7b22453f3ffbdcc1de28754da23ecc8c72dd10cb`
+`d70748e05eab95327f5f426266cf433223834507efaebcb4a9cb203d0c320eff`
+
+`snapshot-v1-mixed.json` is retained only as an incompatible-input fixture. A
+0.2.0 bridge must reject it rather than reinterpret the old location model.

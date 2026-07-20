@@ -14,7 +14,7 @@ from switchboard_dms.desktop import (
     focus_existing_window,
     matching_niri_window_id,
     open_history,
-    open_project,
+    open_task,
     open_session,
     serialize_response,
     stop_session,
@@ -30,7 +30,8 @@ SESSION_KEY = (
 REQUEST_ID = "77777777-7777-4777-8777-777777777777"
 SURFACE_ID = "33333333-3333-4333-8333-333333333333"
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
-LOCATION_ID = "44444444-4444-4444-8444-444444444444"
+CHECKOUT_ID = "44444444-4444-4444-8444-444444444444"
+TASK_ID = "88888888-8888-4888-8888-888888888888"
 TOKEN = f"surface:{SURFACE_ID}"
 
 
@@ -202,8 +203,11 @@ class DesktopActionTests(unittest.TestCase):
         prepared.assert_called_once_with(
             swbctl="swbctl",
             session_key=SESSION_KEY,
+            task_id=None,
+            create_task=False,
             project_id=None,
-            location_id=None,
+            title=None,
+            checkout_id=None,
             provider=None,
             history=False,
             request_id=REQUEST_ID,
@@ -241,8 +245,11 @@ class DesktopActionTests(unittest.TestCase):
                 call(
                     swbctl="/opt/swb ctl",
                     session_key=SESSION_KEY,
+                    task_id=None,
+                    create_task=False,
                     project_id=None,
-                    location_id=None,
+                    title=None,
+                    checkout_id=None,
                     provider=None,
                     history=False,
                     request_id=REQUEST_ID,
@@ -252,8 +259,11 @@ class DesktopActionTests(unittest.TestCase):
                 call(
                     swbctl="/opt/swb ctl",
                     session_key=SESSION_KEY,
+                    task_id=None,
+                    create_task=False,
                     project_id=None,
-                    location_id=None,
+                    title=None,
+                    checkout_id=None,
                     provider=None,
                     history=False,
                     request_id=REQUEST_ID,
@@ -265,17 +275,20 @@ class DesktopActionTests(unittest.TestCase):
         self.assertEqual(launched[0][-2:], ["attach-surface", SURFACE_ID])
 
     @patch("switchboard_dms.desktop._prepared_plan")
-    def test_new_project_uses_only_stable_ids_and_shared_attach_path(
+    def test_new_task_uses_only_stable_ids_and_shared_attach_path(
         self, prepared
     ) -> None:
         prepared.return_value = plan("attach", tmuxTarget='{"pane":"%9"}')
         launched: list[list[str]] = []
 
-        result = open_project(
+        result = open_task(
             swbctl="swbctl",
             terminal="ghostty",
+            task_id=TASK_ID,
+            create=True,
             project_id=PROJECT_ID,
-            location_id=LOCATION_ID,
+            title="Fix picker layout",
+            checkout_id=CHECKOUT_ID,
             provider="claude",
             window_host="snap",
             timeout_ms=1000,
@@ -288,8 +301,11 @@ class DesktopActionTests(unittest.TestCase):
         prepared.assert_called_once_with(
             swbctl="swbctl",
             session_key=None,
+            task_id=TASK_ID,
+            create_task=True,
             project_id=PROJECT_ID,
-            location_id=LOCATION_ID,
+            title="Fix picker layout",
+            checkout_id=CHECKOUT_ID,
             provider="claude",
             history=False,
             request_id=REQUEST_ID,
@@ -307,7 +323,7 @@ class DesktopActionTests(unittest.TestCase):
             swbctl="swbctl",
             terminal="ghostty",
             project_id=PROJECT_ID,
-            location_id=LOCATION_ID,
+            checkout_id=CHECKOUT_ID,
             window_host="snap",
             timeout_ms=1000,
             request_id=REQUEST_ID,
@@ -319,8 +335,11 @@ class DesktopActionTests(unittest.TestCase):
         prepared.assert_called_once_with(
             swbctl="swbctl",
             session_key=None,
+            task_id=None,
+            create_task=False,
             project_id=PROJECT_ID,
-            location_id=LOCATION_ID,
+            title=None,
+            checkout_id=CHECKOUT_ID,
             provider=None,
             history=True,
             request_id=REQUEST_ID,
@@ -331,7 +350,7 @@ class DesktopActionTests(unittest.TestCase):
     @patch("switchboard_dms.desktop.run_bridge")
     def test_stop_returns_only_validated_core_action(self, bridge) -> None:
         bridge.return_value = {
-            "bridgeVersion": 1,
+            "bridgeVersion": 2,
             "ok": True,
             "action": {
                 "kind": "stop",
@@ -362,7 +381,7 @@ class DesktopActionTests(unittest.TestCase):
         self, prepared, bridge, focused
     ) -> None:
         prepared.return_value = plan("switch", tmuxClient="/dev/pts/7")
-        bridge.return_value = {"bridgeVersion": 1, "ok": True, "action": {}}
+        bridge.return_value = {"bridgeVersion": 2, "ok": True, "action": {}}
 
         result = open_session(
             swbctl="swbctl",
@@ -388,7 +407,7 @@ class DesktopActionTests(unittest.TestCase):
     @patch("switchboard_dms.desktop.run_bridge")
     def test_blocked_plan_is_a_small_failure(self, bridge) -> None:
         bridge.return_value = {
-            "bridgeVersion": 1,
+            "bridgeVersion": 2,
             "ok": True,
             "plan": {
                 "kind": "blocked",
@@ -416,7 +435,7 @@ class DesktopActionTests(unittest.TestCase):
     def test_response_framing_is_one_bounded_json_record(self) -> None:
         exit_code, payload = serialize_response(
             {
-                "actionVersion": 1,
+                "actionVersion": 2,
                 "ok": True,
                 "action": {"kind": "focused", "surfaceId": SURFACE_ID},
             }
