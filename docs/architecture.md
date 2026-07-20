@@ -79,6 +79,15 @@ DMS 1.5.0 does not connect that signal to live launcher-result mutation, so
 new rows become visible when the launcher is reopened or the query changes.
 Timeout handling uses `Process.signal(15)` and the helper's process-group guard.
 
+The JavaScript projection module is named `SwitchboardModelV3.js`, with an
+import qualifier that exactly matches its basename. DMS cache-busts the plugin
+component on reload but Qt retains relative JavaScript imports by URL for the
+shell lifetime. Versioning that URL with the frontend model contract prevents
+a `0.2.0` reload from silently retaining the pre-v3 implementation. A future
+model-contract bump must therefore use a correspondingly versioned module URL;
+same-version development edits require a fresh shell process or another new
+module URL before live evidence is claimed.
+
 ## Non-goals
 
 This adapter does not add SSH, provider hooks or liveness inference,

@@ -1,9 +1,8 @@
 # Live DMS integration
 
-> The evidence below records the Phase 1 through 3C Snapshot v1 rollout. The
-> repository-owned harness now targets Snapshot v2/model v3 task and Inbox
-> rows. Phase 4D installed acceptance will be appended after the guarded local
-> rollout; older location/session-list observations remain historical evidence.
+> The repository-owned harness now targets Snapshot v2/model v3 task and Inbox
+> rows. Phase 4D installed acceptance is recorded below; older Phase 1 through
+> 3C location/session-list observations remain historical evidence.
 
 ## Supported DMS paths
 
@@ -299,6 +298,38 @@ test-owned process or surface remained, the isolated state was removed, and
 the empty test transcript was moved to the desktop trash. Phase 3C compositor
 acceptance is therefore complete without adding niri, Ghostty, provider argv,
 or tmux identity to the DMS model.
+
+## Phase 4D installed acceptance
+
+The guarded 2026-07-20 rollout installed Agent Switchboard core `0.2.0`,
+migrated the live registry to schema 8/protocol 2, and reloaded only the
+symlinked Switchboard plugin. The bridge emitted frontend model v3 with one
+explicit open task and 49 unassigned Inbox sessions. Running that exact model
+through the launcher projection produced All tasks, Agent Switchboard, Inbox,
+and Closed categories; the default view contained the task plus one Inbox
+summary, the Inbox rows used distinct Codex and Claude icons, and a project
+title query produced both provider creation choices.
+
+The copied-state component harness passed initial read, exact Inbox query,
+settings focus, full refresh, retained-model executable failure/recovery, and
+bridge-start failure/recovery. Its startup failure path now prints the bounded
+tail of the private Quickshell log, and the exact-query assertion explicitly
+selects Inbox when no task is present.
+
+The first live task open attached one managed Ghostty window to the current
+Codex session's existing tmux pane. The second open returned `focused` for that
+same surface. Claude remained at two processes, Codex at one process, and tmux
+at three sessions throughout. The uniquely tagged test terminal was then
+removed through its exact transient systemd scope, returning the niri window
+count from two to the baseline of one without stopping the shared session.
+
+The shell journal audit also caught that plugin reload refreshed the QML
+component while Qt retained the older relative JavaScript module URL. The
+model module was versioned as `SwitchboardModelV3.js` with the matching import
+qualifier. A fresh enable then loaded successfully; launcher open/close IPC
+succeeded, plugin status was `loaded`, and the post-enable journal contained
+only the normal load line with no Switchboard category or component warning.
+The active Claude session was never stopped, restarted, or signalled.
 
 ## Qt 6 and automation boundary
 

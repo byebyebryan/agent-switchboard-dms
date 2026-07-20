@@ -221,7 +221,7 @@ and same-window dedup while leaving the pre-existing Claude session untouched.
 Remote hosts remain later work, and the legacy `agentSessions` plugin remains
 only the untouched remote fallback.
 
-## Phase 4D: repository-anchored projects and task-first DMS (implementation complete)
+## Phase 4D: repository-anchored projects and task-first DMS (complete)
 
 Phase 4D replaces the location/session-list frontend contract instead of
 layering aliases over it:
@@ -245,8 +245,11 @@ layering aliases over it:
 
 Implementation acceptance is 90 Python tests, 13 deterministic JavaScript
 behavior groups, Qt 6 QML formatting, Ruff, package Pyright, and whitespace
-checks. Guarded installed acceptance and the evidence update remain before the
-phase is marked fully complete.
+checks. Guarded installed acceptance also passed against core `0.2.0`: the
+adapter projected one explicit task and 49 Inbox sessions, exposed all native
+categories and both provider creation choices, reopened the same managed tmux
+session without another provider process, and produced no post-load component
+or category warnings. Exact evidence is in `docs/live-integration.md`.
 
 ## Final audit and publication
 
