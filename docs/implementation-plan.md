@@ -8,9 +8,11 @@
 > retention and cold QML instances. Phase 5 advances the current adapter to
 > Fleet v1, frontend model v4, bridge/action v3, and host-qualified local-core
 > actions. Phase 6 exposes the core-owned local project catalog through a
-> dedicated DMS category and focused TUI handoff. See `architecture.md` and
+> dedicated DMS category and focused TUI handoff. Phase 7 makes task close a
+> single state-first action, adds one-action reopen/open, and advances the
+> adapter to model v5, bridge/action v4, and `0.4.0`. See `architecture.md` and
 > `bridge-contract.md` for the current core
-> `0.2.0` development / adapter `0.3.0` contract.
+> `0.2.0` development / adapter `0.4.0` contract.
 
 ## Phase 0: discovery and contract lock (complete)
 
@@ -351,6 +353,29 @@ failures, local-only projection, no-model Add/Manage access, QML cache handoff,
 107 Python tests, 17 JavaScript behavior groups, QML formatting, Ruff, Pyright,
 and whitespace checks. Guarded private-state and installed local acceptance is
 recorded separately in `live-integration.md`.
+
+## Phase 7: frictionless close and one-action reopen (implementation contract)
+
+- Open task rows expose **Close task** as their first secondary action through
+  both keyboard navigation and the context menu.
+- Close sends fixed argv to core with no stdin, confirmation, handoff editor,
+  prompt injection, or model call.
+- The desktop helper validates TaskCloseAction v2, projects cleanup disposition
+  and warning through Action v4, and QML performs one full Fleet refresh.
+- A cleanup warning does not keep the task in Open: DMS reports it and shows the
+  Closed row with retained live/unknown runtime state.
+- Activating a Closed row invokes `prepare-task --reopen` and opens/resumes it
+  through the existing plan path in one action.
+- Explicit stop becomes provider-neutral for source-projected eligible Codex
+  and Claude rows; Claude history remains Claude-only.
+- The physical frontend module and cache advance to
+  `SwitchboardModelV5Close.js` and `last_good_model_v5_bridge4`.
+
+Acceptance requires exact close/reopen argv tests, independent action and model
+validation, keyboard/context action coverage, toast and refresh behavior,
+closed-runtime rendering, warm-cache busting, and a guarded private-state
+installed run. Live provider checks may use only test-owned blank sessions and
+must not signal existing user sessions.
 
 ## Final audit and publication
 

@@ -1,4 +1,4 @@
-# Bridge and Desktop Contract v3
+# Bridge and Desktop Contract v4
 
 ## Fleet mode
 
@@ -22,13 +22,13 @@ The bridge accepts one Fleet v1 document containing bounded, individually
 validated Snapshot v2 documents. It validates host order, stable identities,
 reachability/error rules, embedded snapshot ownership and timestamps, and
 Snapshot project/repository/checkout/task/session backreferences. It emits
-bridge v3 and frontend model v4:
+bridge v4 and frontend model v5:
 
 ```json
-{"bridgeVersion":3,"model":{"modelVersion":4,"sourceSchemaVersion":2,"sourceProtocolVersion":2,"sourceFleetVersion":1},"ok":true}
+{"bridgeVersion":4,"model":{"modelVersion":5,"sourceSchemaVersion":2,"sourceProtocolVersion":2,"sourceFleetVersion":1},"ok":true}
 ```
 
-Model v4 merges compatible projects by ProjectId but retains per-host routes.
+Model v5 merges compatible projects by ProjectId but retains per-host routes.
 Task identity is `(HostId, TaskId)` and Inbox identity remains the canonical
 host-qualified session key. A remote before first success can appear as a host
 without rows. An unavailable remote can retain last-good rows marked offline
@@ -53,6 +53,10 @@ is:
  "--host", HOST_ID, "--request-id", UUID,
  "--can-focus-desktop", "--can-launch-terminal", "--json"]
 
+[EXECUTABLE, "prepare-task", TASK_ID,
+ "--host", HOST_ID, "--reopen", "--request-id", UUID,
+ "--can-focus-desktop", "--can-launch-terminal", "--json"]
+
 [EXECUTABLE, "prepare-task", TASK_ID, "--host", HOST_ID, "--create",
  "--project", PROJECT_ID, "--title", TITLE,
  "--checkout", CHECKOUT_ID, "--provider", PROVIDER,
@@ -72,19 +76,22 @@ Successful prepare responses contain one independently validated
 PresentationPlan v2:
 
 ```json
-{"bridgeVersion":3,"ok":true,"plan":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"focus","surfaceId":"33333333-3333-4333-8333-333333333333","desktopToken":"opaque"}}
+{"bridgeVersion":4,"ok":true,"plan":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"focus","surfaceId":"33333333-3333-4333-8333-333333333333","desktopToken":"opaque"}}
 ```
 
 The plan HostId must equal the requested owner. `switchboard-open` generates
 request IDs and, for creation, the TaskId. A focus miss repeats the same target
 and request with desktop focus disabled, preserving core idempotency.
 
-## Stop, select, and attach
+## Close, stop, select, and attach
 
-Stop and in-terminal selection use:
+Task close, explicit runtime stop, and in-terminal selection use:
 
 ```text
-[EXECUTABLE, "stop-session", CLAUDE_SESSION_KEY,
+[EXECUTABLE, "task", "close", TASK_ID,
+ "--host", HOST_ID, "--json"]
+
+[EXECUTABLE, "stop-session", SESSION_KEY,
  "--host", HOST_ID, "--json"]
 
 [EXECUTABLE, "select-surface", SURFACE_ID,
@@ -98,10 +105,17 @@ The launched Ghostty executes only:
 ```
 
 Core decides whether a host-qualified command is local or remote. DMS never
-constructs SSH argv and never receives a raw tmux target. Stop consumes one
-validated SessionAction v2. Successful desktop execution emits a separate
-`actionVersion: 3` envelope with `focused`, `switched`, `launched`, or
-`stopped`.
+constructs SSH argv and never receives a raw tmux target. Close consumes one
+validated TaskCloseAction v2; stop consumes SessionAction v2. Successful
+desktop execution emits a separate `actionVersion: 4` envelope with
+`focused`, `switched`, `launched`, `closed`, or `stopped`.
+
+Close has no stdin and cannot carry a handoff, summary, confirmation, prompt,
+or model-generated content. A successful `closed`/`already_closed` result may
+include a bounded cleanup warning and one runtime disposition:
+`no_session`, `already_stopped`, `stopped`, `retained`, or `unknown`. DMS
+refreshes Fleet after every successful close. Opening a Closed row sends
+`--reopen` and presents the resulting plan as one user action.
 
 ## Project catalog handoff
 
@@ -134,9 +148,9 @@ invokes its sibling bridge with:
  "--timeout-ms", TIMEOUT, "--refresh"]
 ```
 
-It forwards exactly one Bridge v3 record plus LF and preserves the
+It forwards exactly one Bridge v4 record plus LF and preserves the
 bridge success/failure exit convention. Wrapper failures use the same Bridge
-v3 error shape. Stderr stays empty. This path invokes no provider, constructs
+v4 error shape. Stderr stays empty. This path invokes no provider, constructs
 no SSH command, reads no core-private state, and leaves no background daemon.
 
 ## Framing and limits
@@ -161,6 +175,7 @@ Representative failures are:
 | `fleet_invalid_json` | no | Framing or JSON syntax was invalid. |
 | `fleet_invalid_protocol` | no | The document was not compatible Fleet v1. |
 | `plan_invalid_protocol` | no | The document was not PresentationPlan v2. |
+| `close_invalid_protocol` | no | The document was not TaskCloseAction v2. |
 | `desktop_plan_host_mismatch` | no | Core returned a plan for another host. |
 | `swbctl_nonzero_exit` | yes | Core exited unsuccessfully. |
 | `process_timeout` | yes | The configured deadline expired. |

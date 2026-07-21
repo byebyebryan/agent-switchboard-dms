@@ -23,16 +23,24 @@ Projects actions. Those rows open core's complete project catalog manager in a
 singleton Ghostty window; paths and mutation payloads never enter the launcher
 model.
 
+Close task is the first secondary action on open task rows and requires no
+handoff form or confirmation. It closes first, asks core to stop only a safely
+owned runtime, refreshes the Fleet, and reports a cleanup warning without
+leaving the task in Open. Selecting a Closed task reopens and opens/resumes it
+in one action.
+
 Claude's native history picker and safe launch-owned runtime stop are context
 menu actions. They do not create duplicate search rows. History remains inside
-Claude's unmodified picker, and stop remains subject to core's independent
+Claude's unmodified picker, and stop for either provider remains subject to
+core's independent
 launch, surface, tmux, PID/birth, UID, and process-group checks.
 
 ## Boundary
 
 `switchboard-bridge` runs one user-configured local `swbctl` executable token
 without a shell and consumes only public Fleet v1, Snapshot v2,
-PresentationPlan v2, and SessionAction v2 JSON. It does not import Agent
+PresentationPlan v2, SessionAction v2, and TaskCloseAction v2 JSON. It does not
+import Agent
 Switchboard internals, read its database or remote configuration, invoke Git or
 SSH, inspect provider transcripts, or own provider/tmux lifecycle.
 `switchboard-open` executes validated host-qualified focus/switch/attach plans
@@ -115,13 +123,14 @@ Create and open a task atomically:
   --checkout CHECKOUT-UUID --provider codex
 ```
 
-Open Claude history or stop one core-confirmed Claude runtime:
+Open Claude history, close a task, or stop one core-confirmed managed runtime:
 
 ```sh
 ./switchboard-open --host HOST-UUID --window-host HOST --history \
   --project PROJECT-UUID --checkout CHECKOUT-UUID
+./switchboard-open --host HOST-UUID --window-host HOST --close-task TASK-UUID
 ./switchboard-open --host HOST-UUID --window-host HOST \
-  --stop HOST-UUID:claude:SESSION-UUID
+  --stop HOST-UUID:codex:SESSION-UUID
 ```
 
 Managed helpers emit one bounded canonical JSON record on stdout and keep
@@ -136,7 +145,7 @@ Run the complete deterministic check lane:
 ./scripts/check
 ```
 
-It covers Fleet v1/model v4 projection, host-qualified task/category/row
+It covers Fleet v1/model v5 projection, host-qualified task/category/row
 behavior, atomic task argv, remote-owner action routing, niri/Ghostty execution,
 project-manager focus/launch/refresh behavior, process-group cleanup and fault
 injection, static QML contracts, and documentation.
