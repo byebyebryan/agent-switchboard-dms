@@ -13,6 +13,7 @@ Item {
     readonly property int modelContractVersion: 4
     readonly property string bridgeExecutable: Paths.strip(Qt.resolvedUrl("switchboard-bridge"))
     readonly property string openerExecutable: Paths.strip(Qt.resolvedUrl("switchboard-open"))
+    readonly property string projectManagerExecutable: Paths.strip(Qt.resolvedUrl("switchboard-projects"))
     property var pluginService: null
     property string trigger: "sb:"
     property string swbctlExecutable: "swbctl"
@@ -47,6 +48,13 @@ Item {
     property bool actionExitFinished: false
     property int actionExitCode: -1
     property string actionStdout: ""
+    property bool managerActive: false
+    property bool managerStartFailed: false
+    property bool managerStdoutFinished: false
+    property bool managerStderrFinished: false
+    property bool managerExitFinished: false
+    property int managerExitCode: -1
+    property string managerStdout: ""
 
     signal itemsChanged
 
@@ -207,7 +215,13 @@ Item {
     }
 
     function executeItem(item) {
-        if (actionActive || !item || !item._windowHost || !item._hostId)
+        if (!item)
+            return;
+        if (item._switchboardKind === "project-add" || item._switchboardKind === "project-manager") {
+            startProjectManager(item);
+            return;
+        }
+        if (actionActive || managerActive || !item._windowHost || !item._hostId)
             return;
 
         let targetArguments;
@@ -220,6 +234,73 @@ Item {
         else
             return;
         startAction(item, targetArguments);
+    }
+
+    function startProjectManager(item) {
+        if (managerActive || actionActive || !item)
+            return;
+
+        const command = [projectManagerExecutable, "--swbctl", swbctlExecutable, "--terminal", terminalExecutable, "--timeout-ms", String(timeoutMs)];
+        if (item._switchboardKind === "project-add")
+            command.push("--add-project");
+        else if (item._switchboardKind === "project-manager" && item._projectId)
+            command.push("--project", item._projectId);
+        else if (item._switchboardKind !== "project-manager")
+            return;
+
+        managerActive = true;
+        managerStartFailed = false;
+        managerStdoutFinished = false;
+        managerStderrFinished = false;
+        managerExitFinished = false;
+        managerExitCode = -1;
+        managerStdout = "";
+        managerProcess.command = command;
+        managerProcess.running = true;
+        itemsChanged();
+    }
+
+    function scheduleStoppedManagerCheck() {
+        Qt.callLater(() => {
+            Qt.callLater(root.finishStoppedManagerIfNeeded);
+        });
+    }
+
+    function finishStoppedManagerIfNeeded() {
+        if (!managerActive || managerProcess.running || managerExitFinished)
+            return;
+
+        managerStdoutFinished = true;
+        managerStderrFinished = true;
+        managerExitFinished = true;
+        managerStartFailed = true;
+        setFailure("project_manager_start_failed", "The project manager process could not be started.", true);
+        maybeFinishManager();
+    }
+
+    function maybeFinishManager() {
+        if (!managerActive || !managerStdoutFinished || !managerStderrFinished || !managerExitFinished)
+            return;
+
+        if (managerStartFailed) {
+            managerActive = false;
+            itemsChanged();
+            return;
+        }
+
+        const parsed = parseCurrentBridgeResponse(managerStdout);
+        if (managerExitCode === 0 && parsed.ok) {
+            lastGoodModel = parsed.model;
+            saveCachedModel(parsed.model, true);
+            currentFailure = null;
+            automaticRetryBudget = 1;
+        } else if (!parsed.ok) {
+            setFailure(parsed.error.code, parsed.error.message, parsed.error.retryable);
+        } else {
+            setFailure("project_manager_exit_mismatch", "The project manager exited unsuccessfully after refreshing the catalog.", true);
+        }
+        managerActive = false;
+        itemsChanged();
     }
 
     function getContextMenuActions(item) {
@@ -572,6 +653,36 @@ Item {
             onStreamFinished: {
                 root.stderrFinished = true;
                 root.maybeFinishRun();
+            }
+        }
+    }
+
+    Process {
+        id: managerProcess
+
+        running: false
+        onRunningChanged: {
+            if (!running && root.managerActive)
+                root.scheduleStoppedManagerCheck();
+        }
+        onExited: (exitCode, exitStatus) => {
+            root.managerExitCode = exitCode;
+            root.managerExitFinished = true;
+            root.maybeFinishManager();
+        }
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                root.managerStdout = text;
+                root.managerStdoutFinished = true;
+                root.maybeFinishManager();
+            }
+        }
+
+        stderr: StdioCollector {
+            onStreamFinished: {
+                root.managerStderrFinished = true;
+                root.maybeFinishManager();
             }
         }
     }

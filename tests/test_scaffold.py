@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 import unittest
 from pathlib import Path
@@ -46,6 +47,9 @@ class ManifestContractTests(unittest.TestCase):
                 self.assertTrue((ROOT / self.manifest[key]).is_file())
         self.assertTrue((ROOT / "SwitchboardModelV4.js").is_file())
         self.assertTrue((ROOT / "switchboard-open").is_file())
+        project_manager = ROOT / "switchboard-projects"
+        self.assertTrue(project_manager.is_file())
+        self.assertTrue(os.access(project_manager, os.X_OK))
 
 
 class QmlScaffoldTests(unittest.TestCase):
@@ -150,6 +154,28 @@ class QmlScaffoldTests(unittest.TestCase):
 
         self.assertIn('property string terminalExecutable: "ghostty"', self.launcher)
         self.assertIn('Qt.resolvedUrl("switchboard-open")', self.launcher)
+        self.assertIn('Qt.resolvedUrl("switchboard-projects")', self.launcher)
+
+    def test_projects_category_opens_local_manager_before_host_routing(self):
+        execute_path = self.launcher.split("function executeItem(item)", 1)[1].split(
+            "function getContextMenuActions", 1
+        )[0]
+        self.assertIn('item._switchboardKind === "project-add"', execute_path)
+        self.assertIn('item._switchboardKind === "project-manager"', execute_path)
+        self.assertLess(
+            execute_path.index("startProjectManager(item)"),
+            execute_path.index("!item._windowHost"),
+        )
+        self.assertIn("function startProjectManager(item)", self.launcher)
+        self.assertIn('command.push("--add-project")', self.launcher)
+        self.assertIn('command.push("--project", item._projectId)', self.launcher)
+        self.assertIn("id: managerProcess", self.launcher)
+        manager_process = self.launcher.split("id: managerProcess", 1)[1].split(
+            "id: actionProcess", 1
+        )[0]
+        self.assertNotIn("Deadline", manager_process)
+        self.assertIn("parseCurrentBridgeResponse(managerStdout)", self.launcher)
+        self.assertIn("saveCachedModel(parsed.model, true)", self.launcher)
 
     def test_failure_retains_last_good_model(self):
         failure_path = self.launcher.split("function maybeFinishRun()", 1)[1]

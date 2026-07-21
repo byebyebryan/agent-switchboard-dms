@@ -151,11 +151,59 @@ function kinds(items, kind) {
     const categories = modelApi.launcherCategories(model())
     assert.deepStrictEqual(JSON.parse(JSON.stringify(categories)), [
         { id: "", name: "All tasks" },
+        { id: "projects", name: "Projects" },
         { id: `project:${PROJECT_ID}`, name: "Agent Switchboard" },
         { id: "inbox", name: "Inbox" },
         { id: "closed", name: "Closed" }
     ])
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(modelApi.launcherCategories(null))), [{ id: "", name: "All tasks" }])
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(modelApi.launcherCategories(null))), [
+        { id: "", name: "All tasks" },
+        { id: "projects", name: "Projects" }
+    ])
+}
+
+{
+    const items = modelApi.launcherItems(model(), "", state({ category: "projects" }))
+    assert.strictEqual(kinds(items, "project-add").length, 1)
+    const managers = kinds(items, "project-manager")
+    assert.strictEqual(managers.length, 2)
+    const projectItem = managers.find(item => item._projectId === PROJECT_ID)
+    assert.strictEqual(projectItem.name, "Agent Switchboard")
+    assert.strictEqual(projectItem.icon, "material:folder_code")
+    assert.strictEqual(projectItem.comment, "agent-switchboard | Manage project")
+    assert.strictEqual(managers.some(item => item.name === "Manage projects"), true)
+
+    const unavailable = modelApi.launcherItems(null, "", state({ category: "projects" }))
+    assert.strictEqual(kinds(unavailable, "project-add").length, 1)
+    assert.strictEqual(kinds(unavailable, "project-manager").length, 1)
+    const searched = modelApi.launcherItems(model(), "agent", state({ category: "projects" }))
+    assert.strictEqual(kinds(searched, "project-manager").length, 1)
+    assert.strictEqual(kinds(searched, "project-add").length, 0)
+}
+
+{
+    const remoteProjectId = "99999999-9999-4999-8999-999999999999"
+    const remoteHost = { source: "remote", remoteName: "snap", hostId: REMOTE_HOST_ID,
+        displayName: "snap", reachability: "online", stale: false,
+        hasSnapshot: true, error: null }
+    const remoteRoute = { hostId: REMOTE_HOST_ID, hostDisplayName: "snap", isLocal: false,
+        defaultProvider: "claude", defaultCheckoutId: CHECKOUT_ID,
+        reachability: "online", stale: false }
+    const fleet = model({
+        hosts: model().hosts.concat([remoteHost]),
+        projects: model().projects.concat([project({
+            projectId: remoteProjectId,
+            name: "Remote only",
+            repositoryName: "remote-only",
+            routes: [remoteRoute]
+        })]),
+        truncation: Object.assign({}, model().truncation, {
+            sourceHostCount: 2, emittedHostCount: 2
+        })
+    })
+    assert.strictEqual(modelApi.validateModel(fleet), true)
+    const managers = kinds(modelApi.launcherItems(fleet, "", state({ category: "projects" })), "project-manager")
+    assert.strictEqual(managers.some(item => item._projectId === remoteProjectId), false)
 }
 
 {
@@ -336,4 +384,4 @@ function kinds(items, kind) {
     }, false), "start_failed")
 }
 
-console.log("SwitchboardModelV4.js: 15 fleet behavior groups passed")
+console.log("SwitchboardModelV4.js: 17 fleet behavior groups passed")

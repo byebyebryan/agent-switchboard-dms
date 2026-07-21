@@ -321,7 +321,10 @@ function parseActionResponse(text) {
 }
 
 function launcherCategories(model) {
-    var result = [{ id: "", name: "All tasks" }]
+    var result = [
+        { id: "", name: "All tasks" },
+        { id: "projects", name: "Projects" }
+    ]
     if (!validateModel(model))
         return result
     for (var index = 0; index < model.projects.length; index++)
@@ -484,6 +487,73 @@ function _statusItem(kind, name, comment, score) {
         _switchboardKind: "status" }
 }
 
+function _projectManagerItem(project, index) {
+    var comment = []
+    if (_string(project.repositoryName))
+        comment.push(project.repositoryName)
+    comment.push("Manage project")
+    return {
+        id: "switchboard:manage-project:" + project.projectId,
+        name: project.name,
+        icon: "material:folder_code",
+        comment: comment.join(" | "),
+        categories: ["Switchboard"],
+        keywords: [project.projectId, project.repositoryName || ""],
+        _preScored: 4000 - index,
+        _switchboardKind: "project-manager",
+        _projectId: project.projectId
+    }
+}
+
+function _projectActionItem(kind) {
+    if (kind === "add")
+        return {
+            id: "switchboard:add-project",
+            name: "Add project",
+            icon: "material:create_new_folder",
+            comment: "Register a Git repository or directory",
+            categories: ["Switchboard"],
+            keywords: ["new", "create", "register", "repository", "directory"],
+            _preScored: 5000,
+            _switchboardKind: "project-add"
+        }
+    return {
+        id: "switchboard:manage-projects",
+        name: "Manage projects",
+        icon: "material:settings",
+        comment: "Open the full project catalog",
+        categories: ["Switchboard"],
+        keywords: ["catalog", "repositories", "checkouts", "worktrees"],
+        _preScored: 1000,
+        _switchboardKind: "project-manager"
+    }
+}
+
+function _itemSearchText(item) {
+    return [item.name, item.comment].concat(item.keywords || [])
+        .filter(function(value) { return typeof value === "string" }).join("\n").toLowerCase()
+}
+
+function _projectManagerItems(model, query) {
+    var normalizedQuery = String(query || "").trim().toLowerCase()
+    var candidates = [_projectActionItem("add")]
+    if (validateModel(model)) {
+        for (var index = 0; index < model.projects.length; index++) {
+            var project = model.projects[index]
+            var local = project.routes.some(function(route) { return route.isLocal })
+            if (local)
+                candidates.push(_projectManagerItem(project, index))
+        }
+    }
+    candidates.push(_projectActionItem("manage"))
+    var result = candidates.filter(function(item) {
+        return !normalizedQuery || _itemSearchText(item).indexOf(normalizedQuery) !== -1
+    })
+    if (result.length === 0)
+        result.push(_statusItem("empty-projects", "No matching projects", "Try another project or catalog action.", 3000))
+    return result
+}
+
 function isStale(model, now, refreshSeconds) {
     return !validateModel(model) || now - model.generatedAt >= refreshSeconds * 1000
 }
@@ -517,6 +587,8 @@ function shouldAcceptRunResult(runSettingsGeneration, settingsGeneration, runExp
 }
 
 function launcherItems(model, query, state) {
+    if (String(state.category || "") === "projects")
+        return _projectManagerItems(model, query)
     if (model === null || model === undefined) {
         if (state.loading)
             return [_statusItem("loading", "Loading Switchboard tasks", "Reading the fleet…", 5000)]

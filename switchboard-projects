@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from switchboard_dms.projects import main
+
+raise SystemExit(main())
