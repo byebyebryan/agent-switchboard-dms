@@ -1,7 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "SwitchboardModelV4.js" as SwitchboardModelV4
+import "SwitchboardModelV4Projects.js" as SwitchboardModelV4
 import qs.Common
 
 Item {

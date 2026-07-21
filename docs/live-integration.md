@@ -411,6 +411,10 @@ installed with its TUI extra, DMS 1.5.2, Quickshell 0.3.0, and Qt 6.11.1. The
 DMS deterministic lane passed 107 Python tests and 17 JavaScript behavior
 groups plus QML formatting, Ruff, Pyright, and whitespace checks.
 
+The launcher and settings import `SwitchboardModelV4Projects.js`. This new
+physical path cache-busts Qt's retained relative JavaScript module while
+keeping frontend model v4 and Bridge v3 unchanged.
+
 The installed-import harness copied retained Agent Switchboard state under
 private XDG roots and used only the active shell's display variables. It proved
 that the static Projects category, one Add Project action, one Manage Projects

@@ -1,4 +1,4 @@
-// Fleet-aware DMS projection and launcher behavior.
+// Fleet-aware DMS projection and launcher behavior with project management.
 var BRIDGE_VERSION = 3
 var ACTION_VERSION = 3
 var MODEL_VERSION = 4

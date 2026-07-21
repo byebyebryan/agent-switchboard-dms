@@ -95,7 +95,7 @@ for directory in Common Modules Services Widgets; do
 done
 cp -- "$repo_root/tests/live/Shell.qml" "$temporary/shell.qml"
 cp -- "$repo_root/SwitchboardLauncher.qml" "$repo_root/SwitchboardSettings.qml" \
-    "$repo_root/SwitchboardModelV4.js" "$repo_root/switchboard-bridge" \
+    "$repo_root/SwitchboardModelV4Projects.js" "$repo_root/switchboard-bridge" \
     "$repo_root/switchboard-projects" "$temporary/"
 cp -a -- "$repo_root/switchboard_dms" "$temporary/switchboard_dms"
 

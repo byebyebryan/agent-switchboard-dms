@@ -6,11 +6,11 @@ const path = require("path")
 const vm = require("vm")
 
 const root = path.resolve(__dirname, "..")
-const source = fs.readFileSync(path.join(root, "SwitchboardModelV4.js"), "utf8")
+const source = fs.readFileSync(path.join(root, "SwitchboardModelV4Projects.js"), "utf8")
     .replace(/^\.pragma library\s*$/m, "")
 const modelApi = {}
 vm.createContext(modelApi)
-vm.runInContext(source, modelApi, { filename: "SwitchboardModelV4.js" })
+vm.runInContext(source, modelApi, { filename: "SwitchboardModelV4Projects.js" })
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111"
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222"
@@ -384,4 +384,4 @@ function kinds(items, kind) {
     }, false), "start_failed")
 }
 
-console.log("SwitchboardModelV4.js: 17 fleet behavior groups passed")
+console.log("SwitchboardModelV4Projects.js: 17 fleet behavior groups passed")

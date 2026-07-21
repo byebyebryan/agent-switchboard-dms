@@ -334,9 +334,11 @@ acceptance:
   `swbctl tui --view projects`, with optional selected-project or add-wizard
   startup;
 - the wrapper lives only while that manager window exists, then requests one
-  full bridge refresh and returns its Bridge v3 response to QML; and
+  full bridge refresh and returns its Bridge v3 response to QML;
 - QML fully revalidates and persists that result, making the next picker read
-  useful despite DMS 1.5 ignoring `itemsChanged()`.
+  useful despite DMS 1.5 ignoring `itemsChanged()`; and
+- the physical JavaScript import moves to `SwitchboardModelV4Projects.js` so a
+  warm plugin reload cannot retain the pre-Projects implementation.
 
 Core remains the sole catalog writer and owns path inspection, atomic config
 replacement, backups, archive blockers, and export/import. DMS does not edit

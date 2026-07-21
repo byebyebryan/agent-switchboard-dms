@@ -45,7 +45,7 @@ class ManifestContractTests(unittest.TestCase):
         for key in ("component", "settings"):
             with self.subTest(key=key):
                 self.assertTrue((ROOT / self.manifest[key]).is_file())
-        self.assertTrue((ROOT / "SwitchboardModelV4.js").is_file())
+        self.assertTrue((ROOT / "SwitchboardModelV4Projects.js").is_file())
         self.assertTrue((ROOT / "switchboard-open").is_file())
         project_manager = ROOT / "switchboard-projects"
         self.assertTrue(project_manager.is_file())
@@ -57,7 +57,7 @@ class QmlScaffoldTests(unittest.TestCase):
     def setUpClass(cls):
         cls.launcher = (ROOT / "SwitchboardLauncher.qml").read_text(encoding="utf-8")
         cls.settings = (ROOT / "SwitchboardSettings.qml").read_text(encoding="utf-8")
-        cls.model = (ROOT / "SwitchboardModelV4.js").read_text(encoding="utf-8")
+        cls.model = (ROOT / "SwitchboardModelV4Projects.js").read_text(encoding="utf-8")
 
     def test_launcher_surface_reads_cache_synchronously(self):
         self.assertRegex(self.launcher, r"property\s+var\s+pluginService\s*:\s*null")
@@ -87,7 +87,7 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
 
     def test_model_module_is_contract_versioned_and_instance_scoped(self):
-        expected_import = 'import "SwitchboardModelV4.js" as SwitchboardModelV4'
+        expected_import = 'import "SwitchboardModelV4Projects.js" as SwitchboardModelV4'
         self.assertIn(expected_import, self.launcher)
         self.assertIn(expected_import, self.settings)
         self.assertNotIn(".pragma library", self.model)

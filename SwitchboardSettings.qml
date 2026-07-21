@@ -1,5 +1,5 @@
 import QtQuick
-import "SwitchboardModelV4.js" as SwitchboardModelV4
+import "SwitchboardModelV4Projects.js" as SwitchboardModelV4
 import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets
