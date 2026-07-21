@@ -10,6 +10,7 @@ from unittest.mock import call, patch
 from switchboard_dms.desktop import (
     APP_ID_PREFIX,
     DesktopActionError,
+    close_task,
     desktop_app_id,
     focus_existing_window,
     matching_niri_window_id,
@@ -216,6 +217,7 @@ class DesktopActionTests(unittest.TestCase):
             session_key=SESSION_KEY,
             task_id=None,
             create_task=False,
+            reopen_task=False,
             project_id=None,
             title=None,
             checkout_id=None,
@@ -260,6 +262,7 @@ class DesktopActionTests(unittest.TestCase):
                     session_key=SESSION_KEY,
                     task_id=None,
                     create_task=False,
+                    reopen_task=False,
                     project_id=None,
                     title=None,
                     checkout_id=None,
@@ -275,6 +278,7 @@ class DesktopActionTests(unittest.TestCase):
                     session_key=SESSION_KEY,
                     task_id=None,
                     create_task=False,
+                    reopen_task=False,
                     project_id=None,
                     title=None,
                     checkout_id=None,
@@ -321,6 +325,7 @@ class DesktopActionTests(unittest.TestCase):
             session_key=None,
             task_id=TASK_ID,
             create_task=True,
+            reopen_task=False,
             project_id=PROJECT_ID,
             title="Fix picker layout",
             checkout_id=CHECKOUT_ID,
@@ -359,6 +364,7 @@ class DesktopActionTests(unittest.TestCase):
             session_key=None,
             task_id=None,
             create_task=False,
+            reopen_task=False,
             project_id=PROJECT_ID,
             title=None,
             checkout_id=CHECKOUT_ID,
@@ -369,10 +375,31 @@ class DesktopActionTests(unittest.TestCase):
             can_focus_desktop=True,
         )
 
+    @patch("switchboard_dms.desktop._prepared_plan")
+    def test_closed_task_reopens_in_the_same_prepare_action(self, prepared) -> None:
+        prepared.return_value = plan("attach", tmuxTarget='{"pane":"%9"}')
+
+        result = open_task(
+            swbctl="swbctl",
+            terminal="ghostty",
+            host_id=HOST_ID,
+            task_id=TASK_ID,
+            reopen=True,
+            window_host="snap",
+            timeout_ms=1000,
+            request_id=REQUEST_ID,
+            which=self.which,
+            launcher=lambda _argv: None,
+        )
+
+        self.assertEqual(result, {"kind": "launched", "surfaceId": SURFACE_ID})
+        self.assertTrue(prepared.call_args.kwargs["reopen_task"])
+        self.assertFalse(prepared.call_args.kwargs["create_task"])
+
     @patch("switchboard_dms.desktop.run_bridge")
     def test_stop_returns_only_validated_core_action(self, bridge) -> None:
         bridge.return_value = {
-            "bridgeVersion": 3,
+            "bridgeVersion": 4,
             "ok": True,
             "action": {
                 "kind": "stop",
@@ -405,7 +432,7 @@ class DesktopActionTests(unittest.TestCase):
         self, prepared, bridge, focused
     ) -> None:
         prepared.return_value = plan("switch", tmuxClient="/dev/pts/7")
-        bridge.return_value = {"bridgeVersion": 3, "ok": True, "action": {}}
+        bridge.return_value = {"bridgeVersion": 4, "ok": True, "action": {}}
 
         result = open_session(
             swbctl="swbctl",
@@ -433,7 +460,7 @@ class DesktopActionTests(unittest.TestCase):
     @patch("switchboard_dms.desktop.run_bridge")
     def test_blocked_plan_is_a_small_failure(self, bridge) -> None:
         bridge.return_value = {
-            "bridgeVersion": 3,
+            "bridgeVersion": 4,
             "ok": True,
             "plan": {
                 "kind": "blocked",
@@ -462,7 +489,7 @@ class DesktopActionTests(unittest.TestCase):
     @patch("switchboard_dms.desktop.run_bridge")
     def test_plan_for_another_host_is_rejected(self, bridge) -> None:
         bridge.return_value = {
-            "bridgeVersion": 3,
+            "bridgeVersion": 4,
             "ok": True,
             "plan": plan("focus", hostId=REMOTE_HOST_ID),
         }
@@ -480,10 +507,57 @@ class DesktopActionTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "desktop_plan_host_mismatch")
 
+    @patch("switchboard_dms.desktop.run_bridge")
+    def test_close_projects_cleanup_warning_without_prompting(self, bridge) -> None:
+        bridge.return_value = {
+            "bridgeVersion": 4,
+            "ok": True,
+            "action": {
+                "kind": "close",
+                "status": "closed",
+                "hostId": HOST_ID,
+                "taskId": TASK_ID,
+                "runtimeDisposition": "retained",
+                "warning": {
+                    "code": "surface_not_owned",
+                    "message": "The task closed, but its runtime remains active.",
+                    "retryable": False,
+                },
+            },
+        }
+
+        self.assertEqual(
+            close_task(
+                swbctl="swbctl",
+                host_id=HOST_ID,
+                task_id=TASK_ID,
+                timeout_ms=1000,
+            ),
+            {
+                "kind": "closed",
+                "status": "closed",
+                "taskId": TASK_ID,
+                "runtimeDisposition": "retained",
+                "warning": {
+                    "code": "surface_not_owned",
+                    "message": "The task closed, but its runtime remains active.",
+                    "retryable": False,
+                },
+            },
+        )
+        bridge.assert_called_once_with(
+            executable="swbctl",
+            refresh=False,
+            timeout_ms=1000,
+            max_sessions=1000,
+            close_task=TASK_ID,
+            action_host_id=HOST_ID,
+        )
+
     def test_response_framing_is_one_bounded_json_record(self) -> None:
         exit_code, payload = serialize_response(
             {
-                "actionVersion": 3,
+                "actionVersion": 4,
                 "ok": True,
                 "action": {"kind": "focused", "surfaceId": SURFACE_ID},
             }

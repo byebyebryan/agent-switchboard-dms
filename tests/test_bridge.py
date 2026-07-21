@@ -9,6 +9,7 @@ import unittest
 
 from switchboard_dms.bridge import (
     MAX_BRIDGE_BYTES,
+    close_task_argv,
     fleet_argv,
     prepare_history_argv,
     prepare_open_argv,
@@ -66,6 +67,28 @@ class BridgeArgumentTests(unittest.TestCase):
         )
 
     def test_prepare_existing_and_create_task_argv_are_exact(self) -> None:
+        self.assertEqual(
+            prepare_task_argv(
+                "swbctl",
+                task_id=TASK_ID,
+                host_id=HOST_ID,
+                request_id=REQUEST_ID,
+                reopen=True,
+            ),
+            [
+                "swbctl",
+                "prepare-task",
+                TASK_ID,
+                "--host",
+                HOST_ID,
+                "--reopen",
+                "--request-id",
+                REQUEST_ID,
+                "--can-focus-desktop",
+                "--can-launch-terminal",
+                "--json",
+            ],
+        )
         self.assertEqual(
             prepare_task_argv(
                 "swbctl", task_id=TASK_ID, host_id=HOST_ID, request_id=REQUEST_ID
@@ -140,6 +163,18 @@ class BridgeArgumentTests(unittest.TestCase):
                 REQUEST_ID,
                 "--can-focus-desktop",
                 "--can-launch-terminal",
+                "--json",
+            ],
+        )
+        self.assertEqual(
+            close_task_argv("swbctl", task_id=TASK_ID, host_id=HOST_ID),
+            [
+                "swbctl",
+                "task",
+                "close",
+                TASK_ID,
+                "--host",
+                HOST_ID,
                 "--json",
             ],
         )
@@ -264,15 +299,15 @@ class BridgeCliTests(unittest.TestCase):
         self.assertEqual(value["error"]["code"], code)
         return value
 
-    def test_fleet_success_is_model_v4_and_shell_free(self) -> None:
+    def test_fleet_success_is_model_v5_and_shell_free(self) -> None:
         arguments = self.temp / "arguments"
         marker = self.temp / "shell-used"
         executable = self.fixture_executable(name="fake swbctl; touch shell-used")
         result = self.run_bridge(executable, extra={"FAKE_ARGUMENTS": str(arguments)})
         value = self.payload(result)
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(value["bridgeVersion"], 3)
-        self.assertEqual(value["model"]["modelVersion"], 4)
+        self.assertEqual(value["bridgeVersion"], 4)
+        self.assertEqual(value["model"]["modelVersion"], 5)
         self.assertEqual(len(value["model"]["tasks"]), 2)
         self.assertEqual(len(value["model"]["inboxSessions"]), 1)
         self.assertEqual(arguments.read_text(encoding="utf-8"), "fleet\n--json")
@@ -371,6 +406,40 @@ class BridgeCliTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0)
                 self.assertEqual(self.payload(result)["plan"]["kind"], "switch")
 
+    def test_reopen_task_cli_forwards_exact_argv(self) -> None:
+        arguments = self.temp / "arguments"
+        result = self.run_bridge(
+            self.fixture_executable(),
+            "--prepare-task",
+            TASK_ID,
+            "--host",
+            HOST_ID,
+            "--reopen-task",
+            "--request-id",
+            REQUEST_ID,
+            output=PLAN,
+            extra={"FAKE_ARGUMENTS": str(arguments)},
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8"),
+            "\n".join(
+                [
+                    "prepare-task",
+                    TASK_ID,
+                    "--host",
+                    HOST_ID,
+                    "--reopen",
+                    "--request-id",
+                    REQUEST_ID,
+                    "--can-focus-desktop",
+                    "--can-launch-terminal",
+                    "--json",
+                ]
+            ),
+        )
+
     def test_stop_and_select_actions_are_projected(self) -> None:
         stop_output = self.temp / "stop.json"
         stop_output.write_text(
@@ -411,6 +480,42 @@ class BridgeCliTests(unittest.TestCase):
         self.assertEqual(
             self.payload(selected)["action"],
             {"kind": "selected", "surfaceId": SURFACE_ID},
+        )
+
+    def test_close_action_is_validated_and_forwards_exact_argv(self) -> None:
+        arguments = self.temp / "arguments"
+        close_output = self.temp / "close.json"
+        close_output.write_text(
+            encode(
+                {
+                    "schemaVersion": 2,
+                    "protocolVersion": 2,
+                    "action": {
+                        "kind": "close",
+                        "status": "closed",
+                        "hostId": HOST_ID,
+                        "taskId": TASK_ID,
+                        "runtimeDisposition": "no_session",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        closed = self.run_bridge(
+            self.fixture_executable(),
+            "--close-task",
+            TASK_ID,
+            "--host",
+            HOST_ID,
+            output=close_output,
+            extra={"FAKE_ARGUMENTS": str(arguments)},
+        )
+
+        self.assertEqual(self.payload(closed)["action"]["status"], "closed")
+        self.assertEqual(
+            arguments.read_text(encoding="utf-8"),
+            "\n".join(["task", "close", TASK_ID, "--host", HOST_ID, "--json"]),
         )
 
     def test_v1_invalid_utf8_nonzero_timeout_and_overflow_are_bounded(self) -> None:
@@ -474,12 +579,12 @@ def encode(value: object) -> str:
 class BridgeSerializationTests(unittest.TestCase):
     def test_overflow_and_serialization_failures_are_managed(self) -> None:
         exit_code, output = serialize_response(
-            {"bridgeVersion": 3, "ok": True, "model": {"value": "x" * MAX_BRIDGE_BYTES}}
+            {"bridgeVersion": 4, "ok": True, "model": {"value": "x" * MAX_BRIDGE_BYTES}}
         )
         self.assertEqual(exit_code, 1)
         self.assertEqual(json.loads(output)["error"]["code"], "bridge_output_overflow")
         exit_code, output = serialize_response(
-            {"bridgeVersion": 3, "ok": True, "model": {"bad": object()}}
+            {"bridgeVersion": 4, "ok": True, "model": {"bad": object()}}
         )
         self.assertEqual(exit_code, 1)
         self.assertEqual(

@@ -19,16 +19,17 @@ from .protocol import (
     parse_fleet,
     parse_presentation_plan,
     parse_session_action,
+    parse_task_close_action,
 )
 
-BRIDGE_VERSION = 3
+BRIDGE_VERSION = 4
 DEFAULT_TIMEOUT_MS = 10_000
 MIN_TIMEOUT_MS = 100
 MAX_TIMEOUT_MS = 60_000
 DEFAULT_MAX_SESSIONS = MAX_MODEL_SESSIONS
 MAX_BRIDGE_BYTES = MAX_JSON_BYTES
 _INTERNAL_ERROR_PAYLOAD = (
-    b'{"bridgeVersion":3,"error":{"code":"bridge_internal_error",'
+    b'{"bridgeVersion":4,"error":{"code":"bridge_internal_error",'
     b'"message":"The bridge encountered an internal error.",'
     b'"retryable":false},"ok":false}\n'
 )
@@ -91,6 +92,7 @@ def prepare_task_argv(
     title: str | None = None,
     checkout_id: str | None = None,
     provider: str | None = None,
+    reopen: bool = False,
     can_focus_desktop: bool = True,
     can_launch_terminal: bool = True,
 ) -> list[str]:
@@ -115,8 +117,11 @@ def prepare_task_argv(
         if checkout_id is not None:
             argv.extend(["--checkout", checkout_id])
         argv.extend(["--provider", provider])
-    elif provider is not None:
-        argv.extend(["--provider", provider])
+    else:
+        if reopen:
+            argv.append("--reopen")
+        if provider is not None:
+            argv.extend(["--provider", provider])
     argv.extend(
         [
             "--request-id",
@@ -162,6 +167,10 @@ def prepare_history_argv(
 
 def stop_session_argv(executable: str, *, session_key: str, host_id: str) -> list[str]:
     return [executable, "stop-session", session_key, "--host", host_id, "--json"]
+
+
+def close_task_argv(executable: str, *, task_id: str, host_id: str) -> list[str]:
+    return [executable, "task", "close", task_id, "--host", host_id, "--json"]
 
 
 def select_surface_argv(
@@ -258,6 +267,7 @@ def run_bridge(
     prepare_open: str | None = None,
     prepare_task: str | None = None,
     create_task: bool = False,
+    reopen_task: bool = False,
     prepare_history: str | None = None,
     project_id: str | None = None,
     task_title: str | None = None,
@@ -269,6 +279,7 @@ def run_bridge(
     select_surface: str | None = None,
     tmux_client: str | None = None,
     stop_session: str | None = None,
+    close_task: str | None = None,
     action_host_id: str | None = None,
 ) -> dict[str, object]:
     try:
@@ -293,6 +304,7 @@ def run_bridge(
                     task_id=prepare_task,
                     host_id=action_host_id,
                     create=create_task,
+                    reopen=reopen_task,
                     project_id=project_id,
                     title=task_title,
                     checkout_id=checkout_id,
@@ -340,6 +352,45 @@ def run_bridge(
                     )
                 )
             return _plan_success(plan)
+
+        if close_task is not None:
+            assert action_host_id is not None
+            output = run_process(
+                close_task_argv(
+                    executable,
+                    task_id=close_task,
+                    host_id=action_host_id,
+                ),
+                timeout_ms=timeout_ms,
+            )
+            if output.exit_code != 0:
+                return _failure(
+                    BridgeError(
+                        "swbctl_nonzero_exit",
+                        f"swbctl exited with status {output.exit_code}.",
+                        True,
+                    )
+                )
+            payload = _json_payload(
+                output.stdout,
+                invalid_code="close_invalid_protocol",
+                invalid_message="swbctl stdout was not one TaskCloseAction document.",
+            )
+            try:
+                action = parse_task_close_action(payload)
+            except ProtocolError:
+                return _failure(
+                    BridgeError(
+                        "close_invalid_protocol",
+                        "swbctl stdout was not a compatible task close action.",
+                        False,
+                    )
+                )
+            return {
+                "bridgeVersion": BRIDGE_VERSION,
+                "ok": True,
+                "action": action,
+            }
 
         if stop_session is not None:
             assert action_host_id is not None
@@ -546,13 +597,6 @@ def _session_key(value: str) -> str:
     return value
 
 
-def _claude_session_key(value: str) -> str:
-    parsed = _session_key(value)
-    if parsed.split(":", 2)[1] != "claude":
-        raise argparse.ArgumentTypeError("expected a canonical Claude session key")
-    return parsed
-
-
 def _tmux_client(value: str) -> str:
     if (
         not value
@@ -586,8 +630,10 @@ def build_parser() -> argparse.ArgumentParser:
     actions.add_argument("--prepare-task", type=_uuid)
     actions.add_argument("--prepare-history", type=_uuid)
     actions.add_argument("--select-surface", type=_uuid)
-    actions.add_argument("--stop-session", type=_claude_session_key)
+    actions.add_argument("--stop-session", type=_session_key)
+    actions.add_argument("--close-task", type=_uuid)
     parser.add_argument("--create-task", action="store_true")
+    parser.add_argument("--reopen-task", action="store_true")
     parser.add_argument("--project", type=_uuid)
     parser.add_argument("--title", type=_task_title)
     parser.add_argument("--checkout", type=_uuid)
@@ -642,12 +688,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if preparing != (args.request_id is not None):
         parser.error("a prepare action and --request-id must be supplied together")
     acting = (
-        preparing or args.select_surface is not None or args.stop_session is not None
+        preparing
+        or args.select_surface is not None
+        or args.stop_session is not None
+        or args.close_task is not None
     )
     if acting != (args.host is not None):
         parser.error("an owning-host action and --host must be supplied together")
     if args.create_task and args.prepare_task is None:
         parser.error("--create-task requires --prepare-task")
+    if args.reopen_task and args.prepare_task is None:
+        parser.error("--reopen-task requires --prepare-task")
+    if args.reopen_task and args.create_task:
+        parser.error("--reopen-task cannot be combined with --create-task")
     if args.create_task and (
         args.project is None or args.title is None or args.provider is None
     ):
@@ -675,7 +728,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (args.select_surface is None) != (args.tmux_client is None):
         parser.error("--select-surface and --tmux-client must be supplied together")
     if (
-        preparing or args.select_surface is not None or args.stop_session is not None
+        preparing
+        or args.select_surface is not None
+        or args.stop_session is not None
+        or args.close_task is not None
     ) and args.refresh:
         parser.error("--refresh applies only to fleet reads")
     try:
@@ -687,6 +743,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             prepare_open=args.prepare_open,
             prepare_task=args.prepare_task,
             create_task=args.create_task,
+            reopen_task=args.reopen_task,
             prepare_history=args.prepare_history,
             project_id=args.project,
             task_title=args.title,
@@ -696,6 +753,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             select_surface=args.select_surface,
             tmux_client=args.tmux_client,
             stop_session=args.stop_session,
+            close_task=args.close_task,
             action_host_id=args.host,
         )
     except Exception:

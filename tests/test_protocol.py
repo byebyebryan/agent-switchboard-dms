@@ -13,6 +13,7 @@ from switchboard_dms.protocol import (
     parse_presentation_plan,
     parse_session_action,
     parse_snapshot,
+    parse_task_close_action,
 )
 
 
@@ -85,7 +86,7 @@ def fleet_fixture() -> dict[str, object]:
 class FleetProjectionTests(unittest.TestCase):
     def test_fleet_merges_projects_and_qualifies_host_owned_rows(self) -> None:
         model = parse_fleet(encode(fleet_fixture())).to_dict()
-        self.assertEqual(model["modelVersion"], 4)
+        self.assertEqual(model["modelVersion"], 5)
         self.assertEqual(model["sourceFleetVersion"], 1)
         self.assertEqual(len(model["hosts"]), 2)
         self.assertEqual(len(model["projects"]), 1)
@@ -210,10 +211,43 @@ class SessionActionTests(unittest.TestCase):
         }
         self.assertEqual(parse_session_action(encode(value))["status"], "stopped")
         value["action"]["sessionKey"] = value["action"]["sessionKey"].replace(
-            ":claude:", ":codex:"
+            HOST_ID, REMOTE_HOST_ID
         )
         with self.assertRaises(ProtocolError):
             parse_session_action(encode(value))
+
+    def test_close_action_preserves_cleanup_warning_without_private_fields(
+        self,
+    ) -> None:
+        value = {
+            "schemaVersion": 2,
+            "protocolVersion": 2,
+            "action": {
+                "kind": "close",
+                "status": "closed",
+                "hostId": HOST_ID,
+                "taskId": TASK_ID,
+                "currentSessionKey": CLAUDE_KEY,
+                "runtimeDisposition": "retained",
+                "warning": {
+                    "code": "surface_not_owned",
+                    "message": "The runtime remains active.",
+                    "scope": "session",
+                    "retryable": False,
+                    "observedAt": 100,
+                    "hostId": HOST_ID,
+                    "provider": "claude",
+                    "sessionKey": CLAUDE_KEY,
+                },
+            },
+        }
+        action = parse_task_close_action(encode(value))
+        self.assertEqual(action["runtimeDisposition"], "retained")
+        self.assertEqual(action["warning"]["code"], "surface_not_owned")
+
+        value["action"]["status"] = "blocked"
+        with self.assertRaises(ProtocolError):
+            parse_task_close_action(encode(value))
 
 
 class SnapshotProjectionTests(unittest.TestCase):

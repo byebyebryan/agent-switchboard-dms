@@ -21,7 +21,7 @@ from .bridge import (
 )
 from .process import ProcessRunError, ProcessOutput, run_process
 
-ACTION_VERSION = 3
+ACTION_VERSION = 4
 MAX_ACTION_BYTES = 16 * 1024
 MAX_DESKTOP_TOKEN_LENGTH = 2048
 MAX_WINDOW_HOST_LENGTH = 256
@@ -249,6 +249,7 @@ def _prepared_plan(
     session_key: str | None,
     task_id: str | None,
     create_task: bool,
+    reopen_task: bool,
     project_id: str | None,
     title: str | None,
     checkout_id: str | None,
@@ -266,6 +267,7 @@ def _prepared_plan(
         prepare_open=session_key,
         prepare_task=task_id,
         create_task=create_task,
+        reopen_task=reopen_task,
         prepare_history=(project_id if history else None),
         project_id=(project_id if create_task else None),
         task_title=title,
@@ -342,6 +344,7 @@ def _open_target(
     session_key: str | None,
     task_id: str | None,
     create_task: bool,
+    reopen_task: bool,
     project_id: str | None,
     title: str | None,
     checkout_id: str | None,
@@ -372,6 +375,7 @@ def _open_target(
         session_key=session_key,
         task_id=task_id,
         create_task=create_task,
+        reopen_task=reopen_task,
         project_id=project_id,
         title=title,
         checkout_id=checkout_id,
@@ -447,6 +451,7 @@ def _open_target(
         session_key=session_key,
         task_id=task_id,
         create_task=create_task,
+        reopen_task=reopen_task,
         project_id=project_id,
         title=title,
         checkout_id=checkout_id,
@@ -493,6 +498,7 @@ def open_session(
         session_key=session_key,
         task_id=None,
         create_task=False,
+        reopen_task=False,
         project_id=None,
         title=None,
         checkout_id=None,
@@ -516,6 +522,7 @@ def open_task(
     timeout_ms: int,
     provider: str | None = None,
     create: bool = False,
+    reopen: bool = False,
     project_id: str | None = None,
     title: str | None = None,
     checkout_id: str | None = None,
@@ -532,6 +539,7 @@ def open_task(
         session_key=None,
         task_id=task_id,
         create_task=create,
+        reopen_task=reopen,
         project_id=project_id,
         title=title,
         checkout_id=checkout_id,
@@ -567,6 +575,7 @@ def open_history(
         session_key=None,
         task_id=None,
         create_task=False,
+        reopen_task=False,
         project_id=project_id,
         title=None,
         checkout_id=checkout_id,
@@ -587,7 +596,7 @@ def stop_session(
     session_key: str,
     timeout_ms: int,
 ) -> dict[str, object]:
-    """Stop one core-revalidated launch-owned Claude runtime."""
+    """Stop one core-revalidated launch-owned managed runtime."""
 
     response = run_bridge(
         executable=swbctl,
@@ -618,6 +627,76 @@ def stop_session(
             retryable=False,
         )
     return {"kind": "stopped", "status": action["status"]}
+
+
+def close_task(
+    *,
+    swbctl: str,
+    host_id: str,
+    task_id: str,
+    timeout_ms: int,
+) -> dict[str, object]:
+    """Close one task and project its independent runtime-cleanup result."""
+
+    response = run_bridge(
+        executable=swbctl,
+        refresh=False,
+        timeout_ms=timeout_ms,
+        max_sessions=DEFAULT_MAX_SESSIONS,
+        close_task=task_id,
+        action_host_id=host_id,
+    )
+    if response.get("ok") is not True:
+        raise _bridge_error(response)
+    action = response.get("action")
+    if not isinstance(action, dict):
+        raise DesktopActionError(
+            "desktop_action_invalid",
+            "The task close response was invalid.",
+            retryable=False,
+        )
+    if action.get("status") == "blocked":
+        raise _blocked_error(action)
+    if (
+        action.get("kind") != "close"
+        or action.get("status") not in {"closed", "already_closed"}
+        or action.get("hostId") != host_id
+        or action.get("taskId") != task_id
+        or action.get("runtimeDisposition")
+        not in {"no_session", "already_stopped", "stopped", "retained", "unknown"}
+    ):
+        raise DesktopActionError(
+            "desktop_action_invalid",
+            "The task close response was invalid.",
+            retryable=False,
+        )
+    result: dict[str, object] = {
+        "kind": "closed",
+        "status": action["status"],
+        "taskId": task_id,
+        "runtimeDisposition": action["runtimeDisposition"],
+    }
+    warning = action.get("warning")
+    if warning is not None:
+        if not isinstance(warning, dict) or not all(
+            isinstance(warning.get(field), expected)
+            for field, expected in (
+                ("code", str),
+                ("message", str),
+                ("retryable", bool),
+            )
+        ):
+            raise DesktopActionError(
+                "desktop_action_invalid",
+                "The task close warning was invalid.",
+                retryable=False,
+            )
+        result["warning"] = {
+            "code": warning["code"],
+            "message": warning["message"],
+            "retryable": warning["retryable"],
+        }
+    return result
 
 
 def _success(action: dict[str, object]) -> dict[str, object]:
@@ -707,15 +786,6 @@ def _session_key(value: str) -> str:
     return value
 
 
-def _claude_session_key(value: str) -> str:
-    parsed = _session_key(value)
-    if parsed.split(":", 2)[1] != "claude":
-        raise argparse.ArgumentTypeError(
-            "expected a canonical local Claude session key"
-        )
-    return parsed
-
-
 def _task_title(value: str) -> str:
     normalized = " ".join(value.split())
     if (
@@ -743,12 +813,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--task", type=_uuid)
     parser.add_argument("--create", action="store_true")
+    parser.add_argument("--reopen", action="store_true")
     parser.add_argument("--project", type=_uuid)
     parser.add_argument("--title", type=_task_title)
     parser.add_argument("--checkout", type=_uuid)
     parser.add_argument("--provider", choices=("codex", "claude"))
     parser.add_argument("--history", action="store_true")
-    parser.add_argument("--stop", dest="stop_session", type=_claude_session_key)
+    parser.add_argument("--stop", dest="stop_session", type=_session_key)
+    parser.add_argument("--close-task", type=_uuid)
     parser.add_argument("session_key", nargs="?", type=_session_key)
     return parser
 
@@ -768,6 +840,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--history requires --project and optional --checkout only")
     elif args.create and not all(value is not None for value in create_arguments):
         parser.error("--create requires --project, --title, and --provider")
+    elif args.reopen and (args.task is None or args.create):
+        parser.error("--reopen requires one existing --task")
     elif not args.create and any(
         value is not None for value in (args.project, args.title, args.checkout)
     ):
@@ -780,12 +854,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.task is not None or args.create,
             args.history,
             args.stop_session is not None,
+            args.close_task is not None,
         )
     )
     if target_count != 1:
-        parser.error("supply exactly one session, project, history, or stop target")
+        parser.error(
+            "supply exactly one session, task, project, history, close, or stop target"
+        )
     try:
-        if args.stop_session is not None:
+        if args.close_task is not None:
+            action = close_task(
+                swbctl=args.swbctl,
+                host_id=args.host_id,
+                task_id=args.close_task,
+                timeout_ms=args.timeout_ms,
+            )
+        elif args.stop_session is not None:
             action = stop_session(
                 swbctl=args.swbctl,
                 host_id=args.host_id,
@@ -821,6 +905,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 task_id=task_id,
                 provider=args.provider,
                 create=args.create,
+                reopen=args.reopen,
                 project_id=args.project,
                 title=args.title,
                 checkout_id=args.checkout,

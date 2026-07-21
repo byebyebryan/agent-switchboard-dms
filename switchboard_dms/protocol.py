@@ -20,7 +20,7 @@ SCHEMA_VERSION = 2
 PROTOCOL_VERSION = 2
 MODEL_VERSION = 3
 FLEET_VERSION = 1
-FLEET_MODEL_VERSION = 4
+FLEET_MODEL_VERSION = 5
 MAX_FLEET_HOSTS = 33
 
 MAX_JSON_BYTES = 8 * 1024 * 1024
@@ -63,10 +63,14 @@ _STATE_CONFIDENCE = frozenset({"confirmed", "inferred", "unknown"})
 _SURFACE_ROLES = frozenset({"session", "provider_manager"})
 _BINDING_CONFIDENCE = frozenset({"confirmed", "unknown"})
 _ERROR_SCOPES = frozenset(
-    {"host", "project", "provider", "session", "launch", "surface"}
+    {"host", "project", "provider", "session", "launch", "surface", "task"}
 )
 _PRESENTATION_PLAN_KINDS = frozenset({"focus", "switch", "attach", "blocked"})
 _SESSION_ACTION_STATUSES = frozenset({"stopped", "already_stopped", "blocked"})
+_TASK_CLOSE_STATUSES = frozenset({"closed", "already_closed", "blocked"})
+_RUNTIME_DISPOSITIONS = frozenset(
+    {"no_session", "already_stopped", "stopped", "retained", "unknown"}
+)
 
 _KEY_NORMALIZER = re.compile(r"[^a-z0-9]")
 _SENSITIVE_KEY_PARTS = (
@@ -879,7 +883,7 @@ def parse_presentation_plan(raw: str | bytes | bytearray) -> dict[str, Any]:
 
 
 def parse_session_action(raw: str | bytes | bytearray) -> dict[str, Any]:
-    """Validate and project one public Claude stop-action v2 envelope."""
+    """Validate and project one public managed stop-action v2 envelope."""
 
     table = _decode(raw)
     _versions(table)
@@ -894,8 +898,8 @@ def parse_session_action(raw: str | bytes | bytearray) -> dict[str, Any]:
     session_key, key_host, provider, _ = _session_key(
         _required(source, "sessionKey", path), f"{path}.sessionKey"
     )
-    if key_host != host_id or provider != "claude":
-        raise ProtocolError(f"{path} is not a host-local Claude identity")
+    if key_host != host_id:
+        raise ProtocolError(f"{path} is not a host-local session identity")
     result: dict[str, Any] = {
         "kind": "stop",
         "status": status,
@@ -908,6 +912,57 @@ def parse_session_action(raw: str | bytes | bytearray) -> dict[str, Any]:
         raise ProtocolError(f"{path} blocked action requires an error")
     if status != "blocked" and "error" in result:
         raise ProtocolError(f"{path} successful action contains an error")
+    return result
+
+
+def parse_task_close_action(raw: str | bytes | bytearray) -> dict[str, Any]:
+    """Validate and project one public state-first task-close v2 envelope."""
+
+    table = _decode(raw)
+    _versions(table)
+    path = "envelope.action"
+    source = _object(_required(table, "action", "envelope"), path)
+    if _string(_required(source, "kind", path), f"{path}.kind", maximum=16) != "close":
+        raise ProtocolError(f"{path}.kind is unsupported")
+    status = _enum(
+        _required(source, "status", path), f"{path}.status", _TASK_CLOSE_STATUSES
+    )
+    host_id = _uuid(_required(source, "hostId", path), f"{path}.hostId")
+    task_id = _uuid(_required(source, "taskId", path), f"{path}.taskId")
+    disposition = _enum(
+        _required(source, "runtimeDisposition", path),
+        f"{path}.runtimeDisposition",
+        _RUNTIME_DISPOSITIONS,
+    )
+    current: str | None = None
+    if source.get("currentSessionKey") is not None:
+        current, key_host, _, _ = _session_key(
+            source["currentSessionKey"], f"{path}.currentSessionKey"
+        )
+        if key_host != host_id:
+            raise ProtocolError(f"{path} session belongs to another host")
+    result: dict[str, Any] = {
+        "kind": "close",
+        "status": status,
+        "hostId": host_id,
+        "taskId": task_id,
+        "runtimeDisposition": disposition,
+    }
+    if current is not None:
+        result["currentSessionKey"] = current
+    for field in ("error", "warning"):
+        if source.get(field) is not None:
+            issue = _error_record(source[field], f"{path}.{field}")
+            if issue.get("hostId") not in {None, host_id}:
+                raise ProtocolError(f"{path}.{field} belongs to another host")
+            if issue.get("sessionKey") not in {None, current}:
+                raise ProtocolError(f"{path}.{field} belongs to another session")
+            result[field] = issue
+    if status == "blocked":
+        if "error" not in result or "warning" in result or disposition != "unknown":
+            raise ProtocolError(f"{path} blocked close shape is invalid")
+    elif "error" in result:
+        raise ProtocolError(f"{path} successful close contains an error")
     return result
 
 
@@ -1136,8 +1191,7 @@ def _recency(session: dict[str, Any]) -> int:
 def _can_stop(session: dict[str, Any], surfaces: dict[str, dict[str, Any]]) -> bool:
     surface = surfaces.get(session["surfaceId"])
     return bool(
-        session["provider"] == "claude"
-        and session["runtimePresence"] == "live"
+        session["runtimePresence"] == "live"
         and surface is not None
         and surface["transport"] == "tmux"
         and surface["role"] == "session"
@@ -1398,9 +1452,7 @@ def _validate_model(value: object) -> dict[str, Any]:
         )
         _integer(row["recencyAt"], f"model.tasks[{index}].recencyAt")
         _boolean(row["canStop"], f"model.tasks[{index}].canStop")
-        if row["canStop"] and (
-            row["provider"] != "claude" or row["runtimePresence"] != "live"
-        ):
+        if row["canStop"] and row["runtimePresence"] != "live":
             raise ProtocolError("model task stop capability is inconsistent")
     session_keys: set[str] = set()
     for index, item in enumerate(inbox):
@@ -1475,9 +1527,7 @@ def _validate_model(value: object) -> dict[str, Any]:
         )
         _integer(row["recencyAt"], f"model.inboxSessions[{index}].recencyAt")
         _boolean(row["canStop"], f"model.inboxSessions[{index}].canStop")
-        if row["canStop"] and (
-            provider != "claude" or row["runtimePresence"] != "live"
-        ):
+        if row["canStop"] and row["runtimePresence"] != "live":
             raise ProtocolError("model Inbox stop capability is inconsistent")
     capabilities = _array(table["capabilities"], "model.capabilities", maximum=2)
     if len(capabilities) != 2:
@@ -2288,9 +2338,7 @@ def _validate_fleet_model(value: object) -> dict[str, Any]:
             or row["hostStale"] != host["stale"]
         ):
             raise ProtocolError("fleet model task routing disagrees with its host")
-        if row["canStop"] and (
-            row["provider"] != "claude" or row["runtimePresence"] != "live"
-        ):
+        if row["canStop"] and row["runtimePresence"] != "live":
             raise ProtocolError("fleet model task stop capability is inconsistent")
     inbox = _array(
         table["inboxSessions"], "model.inboxSessions", maximum=MAX_MODEL_SESSIONS
@@ -2354,9 +2402,7 @@ def _validate_fleet_model(value: object) -> dict[str, Any]:
             or row["hostStale"] != host["stale"]
         ):
             raise ProtocolError("fleet model Inbox routing disagrees with its host")
-        if row["canStop"] and (
-            provider != "claude" or row["runtimePresence"] != "live"
-        ):
+        if row["canStop"] and row["runtimePresence"] != "live":
             raise ProtocolError("fleet model Inbox stop capability is inconsistent")
     warnings = _array(table["warnings"], "model.warnings", maximum=MAX_MODEL_WARNINGS)
     for index, value in enumerate(warnings):
