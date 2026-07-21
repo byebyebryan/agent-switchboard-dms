@@ -387,6 +387,35 @@ private state, and the live plugin reported bridge 4/model 5 after the one
 DMS-only restart required to admit the new JavaScript module path. The tmux
 server PID and pane-PID fingerprint were identical across that restart.
 
+## Provider badges and session-state icons
+
+This presentation follow-up moves provider identity from the left icon into
+DMS's right-side `badgeLabel`, leaving the icon available for the highest-value
+task or session state. Task badges use the current provider, then the preferred
+provider, then `Task`; Inbox and creation badges use their explicit provider.
+Creation names become `New — title`, with `on host` retained when host
+qualification is required. Provider values remain searchable and private action
+fields remain unchanged.
+
+State icons use this precedence: offline, anomalous closed runtime, cleanly
+closed, not started, needs input, working, ready/done, stopped resumable,
+stopped missing/unknown, live with unknown activity, and unknown. The existing
+subtitle remains the authoritative text and continues to distinguish Ready from
+Done. Project-management and informational rows are unchanged.
+
+The adapter remains on Fleet v1, frontend model v5, and bridge/action v4. It
+advances only to adapter `0.4.1` and a new physical model-module path so a warm
+plugin reload cannot retain the former provider-icon projection. Custom labels
+require the installed DMS plugin transformer to preserve `badgeLabel`; the
+machine-level, idempotent post-install patch remains outside this repository.
+An unpatched DMS may fall back to its generic `Plugin` badge and is not a
+supported provider-identity presentation for this increment.
+
+Acceptance requires deterministic coverage of every badge fallback and icon
+precedence branch, provider search after title shortening, installed-transformer
+verification, and a live DMS load with unchanged tmux/provider process
+fingerprints.
+
 ## Final audit and publication
 
 - Re-run all unit, JSON, shell, QML, fixture, and whitespace checks.
