@@ -22,7 +22,7 @@ class ManifestContractTests(unittest.TestCase):
             "id": "switchboard",
             "name": "Switchboard",
             "description": "Agent Switchboard launcher integration for DMS.",
-            "version": "0.4.0",
+            "version": "0.4.1",
             "author": "Bryan Bai",
             "type": "launcher",
             "component": "./SwitchboardLauncher.qml",
@@ -45,7 +45,7 @@ class ManifestContractTests(unittest.TestCase):
         for key in ("component", "settings"):
             with self.subTest(key=key):
                 self.assertTrue((ROOT / self.manifest[key]).is_file())
-        self.assertTrue((ROOT / "SwitchboardModelV5Close.js").is_file())
+        self.assertTrue((ROOT / "SwitchboardModelV5Badges.js").is_file())
         self.assertTrue((ROOT / "switchboard-open").is_file())
         project_manager = ROOT / "switchboard-projects"
         self.assertTrue(project_manager.is_file())
@@ -57,7 +57,7 @@ class QmlScaffoldTests(unittest.TestCase):
     def setUpClass(cls):
         cls.launcher = (ROOT / "SwitchboardLauncher.qml").read_text(encoding="utf-8")
         cls.settings = (ROOT / "SwitchboardSettings.qml").read_text(encoding="utf-8")
-        cls.model = (ROOT / "SwitchboardModelV5Close.js").read_text(encoding="utf-8")
+        cls.model = (ROOT / "SwitchboardModelV5Badges.js").read_text(encoding="utf-8")
 
     def test_launcher_surface_reads_cache_synchronously(self):
         self.assertRegex(self.launcher, r"property\s+var\s+pluginService\s*:\s*null")
@@ -87,10 +87,12 @@ class QmlScaffoldTests(unittest.TestCase):
         self.assertNotRegex(self.launcher, r"\basync\s+function\s+getItems\b")
 
     def test_model_module_is_contract_versioned_and_instance_scoped(self):
-        expected_import = 'import "SwitchboardModelV5Close.js" as SwitchboardModelV5'
+        expected_import = 'import "SwitchboardModelV5Badges.js" as SwitchboardModelV5'
         self.assertIn(expected_import, self.launcher)
         self.assertIn(expected_import, self.settings)
         self.assertNotIn(".pragma library", self.model)
+        self.assertIn("badgeLabel:", self.model)
+        self.assertIn("function _stateIcon(value)", self.model)
 
     def test_settings_use_verified_dms_components(self):
         self.assertIn("PluginSettings {", self.settings)
@@ -254,6 +256,8 @@ class DocumentationContractTests(unittest.TestCase):
             "not a shell command",
             "DMS 1.5.0 or newer",
             "Quickshell runtime supplied by DMS",
+            "plugin-item transformer",
+            "badgeLabel",
             "no third-party Python packages",
             "not no runtime dependencies",
         ):

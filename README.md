@@ -3,10 +3,10 @@
 Switchboard is the task-first DankMaterialShell launcher for local and
 configured remote Agent Switchboard work. Its default view lists open tasks,
 merges compatible projects across hosts, keeps unassigned provider sessions in
-Inbox, and exposes closed tasks separately. Codex, Claude Code, and
-not-yet-started tasks use distinct icons; normal rows show concise project,
-optional remote host, optional nondefault worktree, state, and age instead of
-absolute paths or SSH targets.
+Inbox, and exposes closed tasks separately. Right-side badges identify Codex,
+Claude Code, or an unassigned Task, while left-side icons highlight session and
+task state. Normal rows show concise project, optional remote host, optional
+nondefault worktree, state, and age instead of absolute paths or SSH targets.
 
 The launcher reads Fleet v1, whose host entries each contain an independently
 validated Snapshot v2, into a last-good cache. It persists only the bounded
@@ -60,6 +60,9 @@ packages. That means dependency-free Python code, not no runtime dependencies.
   host-qualified actions, installed on `PATH` or configured as one executable
   token. The value is not a shell command and cannot include arguments.
 - DMS 1.5.0 or newer and the Quickshell runtime supplied by DMS.
+- A DMS plugin-item transformer that preserves launcher `badgeLabel`. Supported
+  hosts apply the generic one-line pass-through as an idempotent machine-level
+  pre-start patch; it is not installed or owned by this plugin.
 - niri, Ghostty, and a systemd user manager for desktop presentation.
 
 Plugin settings contain the `swbctl` and terminal executable tokens, a
@@ -68,6 +71,11 @@ read happens first; stale data coalesces one fleet refresh. Parse, validation,
 process, and timeout failures keep the last-good fleet visible. Missing
 observations, unavailable hosts, and stale data are not converted into
 activity guesses.
+
+DMS already renders `badgeLabel`, but releases through 1.5.2 omit that field
+when transforming third-party plugin items. Without the pass-through patch,
+Switchboard remains actionable but DMS replaces the agent label with its
+generic `Plugin` badge; that is not a supported provider-identity presentation.
 
 DMS 1.5.0 does not consume launcher `itemsChanged()` as a live result-list
 mutation. A validated persisted model makes normal shell starts and plugin
@@ -160,7 +168,8 @@ dms ipc call plugins enable switchboard
 dms ipc call plugins reload switchboard
 ```
 
-When an upgrade introduces a new relative JavaScript module filename, DMS
+Adapter `0.4.1` introduces `SwitchboardModelV5Badges.js`. When an upgrade
+introduces a new relative JavaScript module filename, DMS
 1.5.2/Qt 6.11 may reject that file during a long-lived development-plugin hot
 reload. Run `dms restart` once for that upgrade; it restarts only the shell and
 does not own or stop Switchboard's tmux/provider runtimes. Subsequent reloads

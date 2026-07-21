@@ -68,7 +68,7 @@ present. A task or Inbox row carries its owning HostId privately for actions.
 The visible format stays compact:
 
 ```text
-task title
+state icon | task title | Codex, Claude, or Task badge
 project | optional remote host | optional worktree | state | age
 ```
 
@@ -85,10 +85,15 @@ Projects remain explicit catalog actions rather than task rows. Selecting them
 sends at most a ProjectId to the wrapper—never a path, repository URL, or
 mutation payload.
 
-Codex uses `material:terminal`, Claude uses `material:auto_awesome`, and a task
-without a current session uses `material:task_alt`. Absolute checkout paths,
-SSH targets, transcripts, prompts, provider argv, tmux locators, and private
-Git administrative identity never cross the model boundary.
+Provider badges use the current session provider, then a task's preferred
+provider, then `Task`; Inbox and creation rows use their explicit provider.
+Creation names omit the duplicated provider word. Icons prioritize offline,
+closed-runtime anomaly, clean close, not started, needs input, working,
+ready/done, stopped resumable, stopped missing/unknown, live unknown-activity,
+and fully unknown state in that order. The subtitle remains authoritative.
+Absolute checkout paths, SSH targets, transcripts, prompts, provider argv,
+tmux locators, and private Git administrative identity never cross the model
+boundary.
 
 ## Host-qualified actions
 
@@ -142,12 +147,13 @@ and saved through the same last-good cache path. `itemsChanged()` is still
 emitted as a best effort, but persisted state—not that ignored signal—is the
 reliable handoff to the next launcher instance.
 
-`SwitchboardModelV5Close.js` is a new physical module path because Qt may
+`SwitchboardModelV5Badges.js` is a new physical module path because Qt may
 retain relative JavaScript imports across a plugin reload. The model contract
-advances to v5; changing the path ensures a warm upgrade cannot silently retain
-the pre-close model or behavior. Reload-significant envelope and cache
-validation also remain in the launcher QML component. DMS 1.5.2/Qt 6.11 may
-reject a newly introduced relative script path with `File name case mismatch`
+remains v5; changing the path ensures a warm upgrade cannot silently retain the
+provider-icon projection that preceded badge/state presentation. The earlier
+v5 path also admitted frictionless close behavior. Reload-significant envelope
+and cache validation remain in the launcher QML component. DMS 1.5.2/Qt 6.11
+may reject a newly introduced relative script path with `File name case mismatch`
 inside an already-running development shell even when the spelling is exact.
 That one module-adding upgrade requires a DMS-only restart; fresh processes and
 later reloads consume the versioned path normally.
@@ -173,3 +179,5 @@ Snapshot v2 single-host and advanced the DMS boundary to Fleet v1, frontend
 model v4, bridge/action v3, and adapter `0.3.0`. The frictionless-close slice
 retains Fleet v1/Snapshot v2 while advancing to model v5, bridge/action v4, and
 adapter `0.4.0`.
+Provider-badge/state-icon presentation retains those contracts and advances
+only to adapter `0.4.1`.

@@ -10,9 +10,11 @@
 > actions. Phase 6 exposes the core-owned local project catalog through a
 > dedicated DMS category and focused TUI handoff. Phase 7 makes task close a
 > single state-first action, adds one-action reopen/open, and advances the
-> adapter to model v5, bridge/action v4, and `0.4.0`. See `architecture.md` and
+> adapter to model v5, bridge/action v4, and `0.4.0`. The provider-badge and
+> state-icon follow-up retains those contracts and advances to `0.4.1`. See
+> `architecture.md` and
 > `bridge-contract.md` for the current core
-> `0.2.0` development / adapter `0.4.0` contract.
+> `0.2.0` development / adapter `0.4.1` contract.
 
 ## Phase 0: discovery and contract lock (complete)
 

@@ -1,5 +1,5 @@
 import QtQuick
-import "SwitchboardModelV5Close.js" as SwitchboardModelV5
+import "SwitchboardModelV5Badges.js" as SwitchboardModelV5
 import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets

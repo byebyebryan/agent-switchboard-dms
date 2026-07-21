@@ -6,11 +6,11 @@ const path = require("path")
 const vm = require("vm")
 
 const root = path.resolve(__dirname, "..")
-const source = fs.readFileSync(path.join(root, "SwitchboardModelV5Close.js"), "utf8")
+const source = fs.readFileSync(path.join(root, "SwitchboardModelV5Badges.js"), "utf8")
     .replace(/^\.pragma library\s*$/m, "")
 const modelApi = {}
 vm.createContext(modelApi)
-vm.runInContext(source, modelApi, { filename: "SwitchboardModelV5Close.js" })
+vm.runInContext(source, modelApi, { filename: "SwitchboardModelV5Badges.js" })
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111"
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222"
@@ -211,7 +211,8 @@ function kinds(items, kind) {
     const tasks = kinds(items, "task")
     assert.strictEqual(tasks.length, 1)
     assert.strictEqual(tasks[0].name, "Refine the task picker")
-    assert.strictEqual(tasks[0].icon, "material:terminal")
+    assert.strictEqual(tasks[0].icon, "material:sync")
+    assert.strictEqual(tasks[0].badgeLabel, "Codex")
     assert.strictEqual(tasks[0].comment, "Agent Switchboard | Working | now")
     assert.strictEqual(tasks[0].comment.includes("/work"), false)
     assert.strictEqual(kinds(items, "session").length, 0)
@@ -253,11 +254,15 @@ function kinds(items, kind) {
     assert.notStrictEqual(taskItems[0].id, taskItems[1].id)
     const remoteItem = taskItems.find(item => item._hostId === REMOTE_HOST_ID)
     assert.strictEqual(remoteItem.comment, "Agent Switchboard | snap | Offline | now")
+    assert.strictEqual(remoteItem.icon, "material:cloud_off")
+    assert.strictEqual(remoteItem.badgeLabel, "Codex")
     const creations = kinds(modelApi.launcherItems(
         fleet, "Continue review", state({ category: `project:${PROJECT_ID}` })
     ), "create")
     assert.strictEqual(creations.length, 4)
     assert.strictEqual(creations.some(item => item.name.includes(" on snap ")), true)
+    const remoteCreations = creations.filter(item => item._hostId === REMOTE_HOST_ID)
+    assert.strictEqual(remoteCreations.every(item => item.icon === "material:cloud_off"), true)
 }
 
 {
@@ -274,11 +279,48 @@ function kinds(items, kind) {
         pinned: false
     })
     const tasks = kinds(modelApi.launcherItems(model({ tasks: [claudeTask, noSession] }), "", state()), "task")
-    assert.strictEqual(tasks[0].icon, "material:auto_awesome")
+    assert.strictEqual(tasks[0].icon, "material:sync")
+    assert.strictEqual(tasks[0].badgeLabel, "Claude")
     assert.strictEqual(tasks[0]._canStop, true)
-    assert.strictEqual(tasks[1].icon, "material:task_alt")
+    assert.strictEqual(tasks[1].icon, "material:add_circle")
+    assert.strictEqual(tasks[1].badgeLabel, "Codex")
     assert.strictEqual(tasks[1].comment.includes("Not started"), true)
+    const unassigned = kinds(modelApi.launcherItems(model({ tasks: [task({
+        provider: null,
+        preferredProvider: null,
+        currentSessionKey: null,
+        activity: "unknown",
+        runtimePresence: "unknown"
+    })] }), "", state()), "task")[0]
+    assert.strictEqual(unassigned.badgeLabel, "Task")
     assert.strictEqual(modelApi.validateModel(model({ tasks: [codexTask] })), true)
+}
+
+{
+    const base = {
+        hostReachability: "online",
+        status: "open",
+        currentSessionKey: CODEX_SESSION,
+        activity: "unknown",
+        runtimePresence: "unknown",
+        resumability: "unknown"
+    }
+    const iconCases = [
+        [{ hostReachability: "offline", status: "closed", runtimePresence: "live" }, "material:cloud_off"],
+        [{ status: "closed", runtimePresence: "live" }, "material:warning"],
+        [{ status: "closed", runtimePresence: "stopped" }, "material:archive"],
+        [{ currentSessionKey: null, activity: "working" }, "material:add_circle"],
+        [{ activity: "needs_input", runtimePresence: "stopped" }, "material:priority_high"],
+        [{ activity: "working", runtimePresence: "stopped" }, "material:sync"],
+        [{ activity: "ready", runtimePresence: "stopped" }, "material:check_circle"],
+        [{ activity: "completed", runtimePresence: "stopped" }, "material:check_circle"],
+        [{ runtimePresence: "stopped", resumability: "resumable" }, "material:history"],
+        [{ runtimePresence: "stopped", resumability: "missing" }, "material:stop_circle"],
+        [{ runtimePresence: "live" }, "material:terminal"],
+        [{}, "material:help_outline"]
+    ]
+    for (const [overrides, expected] of iconCases)
+        assert.strictEqual(modelApi._stateIcon(Object.assign({}, base, overrides)), expected)
 }
 
 {
@@ -298,6 +340,8 @@ function kinds(items, kind) {
     const items = kinds(modelApi.launcherItems(model({ tasks: [closed] }), "", state({ category: "closed" })), "task")
     assert.strictEqual(items.length, 1)
     assert.strictEqual(items[0].comment.includes("Closed · runtime live"), true)
+    assert.strictEqual(items[0].icon, "material:warning")
+    assert.strictEqual(items[0].badgeLabel, "Codex")
     assert.strictEqual(items[0]._status, "closed")
 }
 
@@ -305,7 +349,8 @@ function kinds(items, kind) {
     const items = modelApi.launcherItems(model(), "", state({ category: "inbox" }))
     const sessions = kinds(items, "session")
     assert.strictEqual(sessions.length, 1)
-    assert.strictEqual(sessions[0].icon, "material:auto_awesome")
+    assert.strictEqual(sessions[0].icon, "material:priority_high")
+    assert.strictEqual(sessions[0].badgeLabel, "Claude")
     assert.strictEqual(sessions[0].comment, "Agent Switchboard | Needs input | now")
     assert.strictEqual(sessions[0]._canStop, true)
 }
@@ -316,6 +361,9 @@ function kinds(items, kind) {
     const creations = kinds(modelApi.launcherItems(model(), "Fix picker layout", state({ category })), "create")
     assert.strictEqual(creations.length, 2)
     assert.strictEqual(JSON.stringify(creations.map(item => item._provider).sort()), JSON.stringify(["claude", "codex"]))
+    assert.strictEqual(JSON.stringify(creations.map(item => item.badgeLabel).sort()), JSON.stringify(["Claude", "Codex"]))
+    assert.strictEqual(creations.every(item => item.name === "New — Fix picker layout"), true)
+    assert.strictEqual(creations.every(item => item.icon === "material:add_circle"), true)
     assert.strictEqual(creations[0]._title, "Fix picker layout")
     assert.strictEqual(creations[0]._checkoutId, CHECKOUT_ID)
     assert.strictEqual(kinds(modelApi.launcherItems(model(), "x".repeat(257), state({ category })), "create").length, 0)
@@ -325,6 +373,9 @@ function kinds(items, kind) {
 {
     const match = kinds(modelApi.launcherItems(model(), "concise", state()), "task")
     assert.strictEqual(match.length, 1)
+    const preferred = task({ provider: null, preferredProvider: "claude", currentSessionKey: null,
+        activity: "unknown", runtimePresence: "unknown" })
+    assert.strictEqual(kinds(modelApi.launcherItems(model({ tasks: [preferred] }), "claude", state()), "task").length, 1)
     assert.strictEqual(kinds(modelApi.launcherItems(model(), "missing", state()), "task").length, 0)
 }
 
@@ -395,4 +446,4 @@ function kinds(items, kind) {
     }, false), "start_failed")
 }
 
-console.log("SwitchboardModelV5Close.js: 17 fleet behavior groups passed")
+console.log("SwitchboardModelV5Badges.js: 18 fleet behavior groups passed")

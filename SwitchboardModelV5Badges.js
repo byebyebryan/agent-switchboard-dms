@@ -1,4 +1,4 @@
-// Fleet-aware DMS projection with project management and frictionless close.
+// Fleet-aware DMS projection with provider badges and session-state icons.
 var BRIDGE_VERSION = 4
 var ACTION_VERSION = 4
 var MODEL_VERSION = 5
@@ -384,17 +384,37 @@ function _stateLabel(value) {
     return "State unknown"
 }
 
-function _providerIcon(provider) {
+function _providerLabel(provider) {
     if (provider === "claude")
-        return "material:auto_awesome"
+        return "Claude"
     if (provider === "codex")
+        return "Codex"
+    return ""
+}
+
+function _stateIcon(value) {
+    if (value.hostReachability === "offline")
+        return "material:cloud_off"
+    if (value.status === "closed")
+        return value.runtimePresence === "stopped" ? "material:archive" : "material:warning"
+    if (!value.currentSessionKey)
+        return "material:add_circle"
+    if (value.activity === "needs_input")
+        return "material:priority_high"
+    if (value.activity === "working")
+        return "material:sync"
+    if (value.activity === "ready" || value.activity === "completed")
+        return "material:check_circle"
+    if (value.runtimePresence === "stopped")
+        return value.resumability === "resumable" ? "material:history" : "material:stop_circle"
+    if (value.runtimePresence === "live")
         return "material:terminal"
-    return "material:task_alt"
+    return "material:help_outline"
 }
 
 function _taskSearchText(task) {
     return [task.title, task.purpose, task.projectName, task.checkoutName,
-        task.checkoutBranch, task.taskId, task.provider, task.hostDisplayName]
+        task.checkoutBranch, task.taskId, task.provider, task.preferredProvider, task.hostDisplayName]
         .filter(function(value) { return typeof value === "string" }).join("\n").toLowerCase()
 }
 
@@ -411,10 +431,12 @@ function _taskItem(task, now, index) {
     return {
         id: "switchboard:task:" + task.hostId + ":" + task.taskId,
         name: task.title,
-        icon: _providerIcon(task.provider),
+        icon: _stateIcon(task),
+        badgeLabel: _providerLabel(task.provider || task.preferredProvider) || "Task",
         comment: comment.join(" | "),
         categories: ["Switchboard"],
-        keywords: [task.taskId, task.projectId, task.hostDisplayName],
+        keywords: [task.taskId, task.projectId, task.provider || task.preferredProvider,
+            task.hostDisplayName],
         _preScored: (task.pinned ? 4000 : 3000) - index,
         _switchboardKind: "task",
         _hostId: task.hostId,
@@ -443,21 +465,24 @@ function _inboxItem(session, now, index) {
         comment.push(session.projectName)
     if (!session.isLocal)
         comment.push(session.hostDisplayName)
-    comment.push(_stateLabel({
+    var state = {
         status: "open", currentSessionKey: session.sessionKey, activity: session.activity,
         runtimePresence: session.runtimePresence, resumability: session.resumability,
         hostReachability: session.hostReachability
-    }))
+    }
+    comment.push(_stateLabel(state))
     if (session.hostStale && session.hostReachability !== "offline")
         comment.push("Stale")
     comment.push(_age(session.recencyAt, now))
     return {
         id: "switchboard:inbox:" + session.sessionKey,
         name: name,
-        icon: _providerIcon(session.provider),
+        icon: _stateIcon(state),
+        badgeLabel: _providerLabel(session.provider),
         comment: comment.join(" | "),
         categories: ["Switchboard"],
-        keywords: [session.sessionKey, session.providerSessionId, session.hostDisplayName],
+        keywords: [session.sessionKey, session.providerSessionId, session.provider,
+            session.hostDisplayName],
         _preScored: 2500 - index,
         _switchboardKind: "session",
         _hostId: session.hostId,
@@ -471,7 +496,6 @@ function _inboxItem(session, now, index) {
 }
 
 function _createItem(project, route, provider, title, index, qualifyHost) {
-    var providerName = provider === "claude" ? "Claude" : "Codex"
     var hostSuffix = qualifyHost ? " on " + route.hostDisplayName : ""
     var comment = [project.name]
     if (!route.isLocal)
@@ -479,8 +503,9 @@ function _createItem(project, route, provider, title, index, qualifyHost) {
     comment.push(route.reachability === "offline" ? "Offline" : "Create and open task")
     return {
         id: "switchboard:create:" + route.hostId + ":" + provider + ":" + project.projectId + ":" + title,
-        name: "New " + providerName + hostSuffix + " — " + title,
-        icon: _providerIcon(provider),
+        name: "New" + hostSuffix + " — " + title,
+        icon: route.reachability === "offline" ? "material:cloud_off" : "material:add_circle",
+        badgeLabel: _providerLabel(provider),
         comment: comment.join(" | "),
         categories: ["Switchboard"],
         keywords: [project.projectId, provider, title, route.hostDisplayName],

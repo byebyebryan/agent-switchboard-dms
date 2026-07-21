@@ -1,7 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "SwitchboardModelV5Close.js" as SwitchboardModelV5
+import "SwitchboardModelV5Badges.js" as SwitchboardModelV5
 import qs.Common
 import qs.Services
 
