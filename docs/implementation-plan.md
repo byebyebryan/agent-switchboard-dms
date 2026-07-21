@@ -413,10 +413,14 @@ machine-level, idempotent post-install patch remains outside this repository.
 An unpatched DMS may fall back to its generic `Plugin` badge and is not a
 supported provider-identity presentation for this increment.
 
-Acceptance requires deterministic coverage of every badge fallback and icon
-precedence branch, provider search after title shortening, installed-transformer
-verification, and a live DMS load with unchanged tmux/provider process
-fingerprints.
+Acceptance completed on 2026-07-21. The deterministic lane passed 113 Python
+tests and 18 JavaScript behavior groups plus QML formatting, Ruff, Pyright, and
+whitespace checks. The installed transformer preserved `badgeLabel`, the
+private active-Wayland harness reached `LIVE_INTEGRATION_OK`, and one expected
+DMS-only cache-busting restart loaded adapter `0.4.1`. The tmux server, pane
+ID/PID set, and persistent provider-root fingerprint remained unchanged. A live
+`sb:` query rendered a `Codex` badge and history icon for the retained
+resumable task without activating an item or invoking a provider.
 
 ## Final audit and publication
 

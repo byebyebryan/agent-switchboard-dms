@@ -469,6 +469,33 @@ guarded by the tmux server PID and a hash of every pane ID/PID pair; both were
 identical before and after. No Codex or Claude runtime was launched, stopped,
 restarted, adopted, or signalled.
 
+## Provider-badge and state-icon acceptance
+
+The 2026-07-21 presentation acceptance used adapter `0.4.1`, DMS 1.5.2,
+Quickshell 0.3.0, and Qt 6.11.1. The deterministic lane passed 113 Python tests,
+18 JavaScript behavior groups, QML formatting, Ruff, Pyright, and whitespace
+checks. Coverage includes every icon-precedence branch,
+provider/preferred-provider badge fallback, provider search, shortened creation
+names, and offline creation routes.
+
+The installed DMS transformer preserved `badgeLabel`, and the external
+idempotent pre-start patch exited successfully on the DMS restart. The private
+installed-import harness initially inherited a stale X11 control-shell
+environment; rerunning with only the active DMS process's Wayland/session
+variables reached `LIVE_INTEGRATION_OK` without touching the live registry.
+
+As expected for a new relative JavaScript filename, plugin-only reload rejected
+`SwitchboardModelV5Badges.js` with Qt's `File name case mismatch`. One DMS-only
+restart loaded the plugin at bridge 4/model 5. The tmux server, every tmux pane
+ID/PID pair, and the persistent Codex/Claude provider-root fingerprint were
+identical before and after; the restarted DMS service finished healthy with no
+Switchboard component error.
+
+A real `sb:` query then rendered the retained resumable task with a `Codex`
+right-side badge, the history state icon, and the unchanged `Resumable`
+subtitle. No launcher item was activated, so the exercise invoked no provider,
+model call, task action, or session mutation.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:
