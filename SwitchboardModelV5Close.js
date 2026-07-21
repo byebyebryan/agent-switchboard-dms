@@ -1,7 +1,7 @@
-// Fleet-aware DMS projection and launcher behavior with project management.
-var BRIDGE_VERSION = 3
-var ACTION_VERSION = 3
-var MODEL_VERSION = 4
+// Fleet-aware DMS projection with project management and frictionless close.
+var BRIDGE_VERSION = 4
+var ACTION_VERSION = 4
+var MODEL_VERSION = 5
 var MAX_EXECUTABLE_LENGTH = 4096
 var MAX_MODEL_HOSTS = 33
 var MAX_MODEL_PROJECTS = 1000
@@ -108,7 +108,7 @@ function _validateTask(value) {
         return false
     if ((value.currentSessionKey === null) !== (value.provider === null))
         return false
-    if (value.canStop && (value.provider !== "claude" || value.runtimePresence !== "live"))
+    if (value.canStop && value.runtimePresence !== "live")
         return false
     return _timestamp(value.recencyAt) && _string(value.hostId)
         && _string(value.hostDisplayName) && typeof value.isLocal === "boolean"
@@ -131,7 +131,7 @@ function _validateInbox(value) {
             || !_oneOf(value.attachment, ["attached", "detached", "none", "unknown"])
             || !_oneOf(value.stateConfidence, ["confirmed", "inferred", "unknown"]))
         return false
-    if (value.canStop && (value.provider !== "claude" || value.runtimePresence !== "live"))
+    if (value.canStop && value.runtimePresence !== "live")
         return false
     return _timestamp(value.recencyAt) && typeof value.canStop === "boolean"
         && _string(value.hostId) && _string(value.hostDisplayName)
@@ -314,6 +314,18 @@ function parseActionResponse(text) {
             return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
         return { ok: true, action: envelope.action }
     }
+    if (envelope.action.kind === "closed") {
+        if (!_oneOf(envelope.action.status, ["closed", "already_closed"])
+                || !_string(envelope.action.taskId)
+                || !_oneOf(envelope.action.runtimeDisposition,
+                    ["no_session", "already_stopped", "stopped", "retained", "unknown"])
+                || (envelope.action.warning !== undefined
+                    && (!_object(envelope.action.warning) || !_string(envelope.action.warning.code)
+                        || !_string(envelope.action.warning.message)
+                        || typeof envelope.action.warning.retryable !== "boolean")))
+            return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
+        return { ok: true, action: envelope.action }
+    }
     if (!_oneOf(envelope.action.kind, ["focused", "switched", "launched"])
             || !_string(envelope.action.surfaceId))
         return _failure("action_invalid_result", "The session opener returned an invalid result.", false)
@@ -350,8 +362,13 @@ function _age(timestamp, now) {
 function _stateLabel(value) {
     if (value.hostReachability === "offline")
         return "Offline"
-    if (value.status === "closed")
+    if (value.status === "closed") {
+        if (value.runtimePresence === "live")
+            return "Closed · runtime live"
+        if (value.runtimePresence === "unknown")
+            return "Closed · runtime unknown"
         return "Closed"
+    }
     if (!value.currentSessionKey)
         return "Not started"
     if (value.activity === "needs_input")
@@ -406,6 +423,7 @@ function _taskItem(task, now, index) {
         _checkoutId: task.checkoutId,
         _sessionKey: task.currentSessionKey,
         _provider: task.provider,
+        _status: task.status,
         _canStop: task.canStop,
         _windowHost: task.hostDisplayName
     }

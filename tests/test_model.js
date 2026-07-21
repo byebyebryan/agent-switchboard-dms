@@ -6,11 +6,11 @@ const path = require("path")
 const vm = require("vm")
 
 const root = path.resolve(__dirname, "..")
-const source = fs.readFileSync(path.join(root, "SwitchboardModelV4Projects.js"), "utf8")
+const source = fs.readFileSync(path.join(root, "SwitchboardModelV5Close.js"), "utf8")
     .replace(/^\.pragma library\s*$/m, "")
 const modelApi = {}
 vm.createContext(modelApi)
-vm.runInContext(source, modelApi, { filename: "SwitchboardModelV4Projects.js" })
+vm.runInContext(source, modelApi, { filename: "SwitchboardModelV5Close.js" })
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111"
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222"
@@ -101,7 +101,7 @@ function inbox(overrides = {}) {
 
 function model(overrides = {}) {
     return Object.assign({
-        modelVersion: 4,
+        modelVersion: 5,
         sourceSchemaVersion: 2,
         sourceProtocolVersion: 2,
         sourceFleetVersion: 1,
@@ -142,9 +142,9 @@ function kinds(items, kind) {
 }
 
 {
-    const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 3, ok: true, model: model() }))
+    const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 4, ok: true, model: model() }))
     assert.strictEqual(parsed.ok, true)
-    assert.strictEqual(parsed.model.modelVersion, 4)
+    assert.strictEqual(parsed.model.modelVersion, 5)
 }
 
 {
@@ -262,6 +262,7 @@ function kinds(items, kind) {
 
 {
     const claudeTask = task({ provider: "claude", currentSessionKey: CLAUDE_SESSION, canStop: true })
+    const codexTask = task({ canStop: true })
     const noSession = task({
         taskId: "77777777-7777-4777-8777-777777777777",
         title: "Plan next phase",
@@ -277,6 +278,7 @@ function kinds(items, kind) {
     assert.strictEqual(tasks[0]._canStop, true)
     assert.strictEqual(tasks[1].icon, "material:task_alt")
     assert.strictEqual(tasks[1].comment.includes("Not started"), true)
+    assert.strictEqual(modelApi.validateModel(model({ tasks: [codexTask] })), true)
 }
 
 {
@@ -291,11 +293,12 @@ function kinds(items, kind) {
 }
 
 {
-    const closed = task({ status: "closed", closedAt: 100000, currentSessionKey: null, provider: null, canStop: false })
+    const closed = task({ status: "closed", closedAt: 100000, canStop: false })
     assert.strictEqual(kinds(modelApi.launcherItems(model({ tasks: [closed] }), "", state()), "task").length, 0)
     const items = kinds(modelApi.launcherItems(model({ tasks: [closed] }), "", state({ category: "closed" })), "task")
     assert.strictEqual(items.length, 1)
-    assert.strictEqual(items[0].comment.includes("Closed"), true)
+    assert.strictEqual(items[0].comment.includes("Closed · runtime live"), true)
+    assert.strictEqual(items[0]._status, "closed")
 }
 
 {
@@ -327,17 +330,25 @@ function kinds(items, kind) {
 
 {
     const good = modelApi.parseActionResponse(JSON.stringify({
-        actionVersion: 3,
+        actionVersion: 4,
         ok: true,
         action: { kind: "launched", surfaceId: "33333333-3333-4333-8333-333333333333" }
     }))
     assert.strictEqual(good.ok, true)
     const stopped = modelApi.parseActionResponse(JSON.stringify({
-        actionVersion: 3,
+        actionVersion: 4,
         ok: true,
         action: { kind: "stopped", status: "stopped" }
     }))
     assert.strictEqual(stopped.ok, true)
+    const closed = modelApi.parseActionResponse(JSON.stringify({
+        actionVersion: 4,
+        ok: true,
+        action: { kind: "closed", status: "closed", taskId: TASK_ID,
+            runtimeDisposition: "retained", warning: { code: "surface_not_owned",
+                message: "The runtime remains active.", retryable: false } }
+    }))
+    assert.strictEqual(closed.ok, true)
 }
 
 {
@@ -348,7 +359,7 @@ function kinds(items, kind) {
         Object.assign({}, model(), { inboxSessions: [{}] })
     ]
     for (const bad of badModels) {
-        const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 3, ok: true, model: bad }))
+        const parsed = modelApi.parseBridgeResponse(JSON.stringify({ bridgeVersion: 4, ok: true, model: bad }))
         assert.strictEqual(parsed.ok, false)
         assert.strictEqual(parsed.error.code, "bridge_invalid_model")
     }
@@ -384,4 +395,4 @@ function kinds(items, kind) {
     }, false), "start_failed")
 }
 
-console.log("SwitchboardModelV4Projects.js: 17 fleet behavior groups passed")
+console.log("SwitchboardModelV5Close.js: 17 fleet behavior groups passed")

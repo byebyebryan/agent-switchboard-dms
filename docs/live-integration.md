@@ -1,6 +1,6 @@
 # Live DMS integration
 
-> The repository-owned harness now targets Fleet v1/model v4 task and Inbox
+> The repository-owned harness now targets Fleet v1/model v5 task and Inbox
 > rows. Phase 4D/4E installed acceptance is recorded below; older Phase 1
 > through 3C location/session-list observations remain historical evidence.
 

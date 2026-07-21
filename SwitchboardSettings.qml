@@ -1,5 +1,5 @@
 import QtQuick
-import "SwitchboardModelV4Projects.js" as SwitchboardModelV4
+import "SwitchboardModelV5Close.js" as SwitchboardModelV5
 import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets
@@ -48,7 +48,7 @@ PluginSettings {
                 return;
 
             const loadedValue = String(settings.loadValue("terminal", "ghostty") || "ghostty");
-            const boundedValue = SwitchboardModelV4.boundedExecutable(loadedValue, "ghostty");
+            const boundedValue = SwitchboardModelV5.boundedExecutable(loadedValue, "ghostty");
             if (terminalField.activeFocus && isInitialized)
                 return;
 
@@ -63,7 +63,7 @@ PluginSettings {
             if (!isInitialized)
                 return;
 
-            const boundedValue = SwitchboardModelV4.boundedExecutable(terminalField.text, "ghostty");
+            const boundedValue = SwitchboardModelV5.boundedExecutable(terminalField.text, "ghostty");
             if (terminalField.text !== boundedValue)
                 terminalField.text = boundedValue;
 
@@ -100,7 +100,7 @@ PluginSettings {
 
             width: parent.width
             placeholderText: "ghostty"
-            maximumLength: SwitchboardModelV4.MAX_EXECUTABLE_LENGTH
+            maximumLength: SwitchboardModelV5.MAX_EXECUTABLE_LENGTH
             onEditingFinished: terminalSetting.commit()
             onActiveFocusChanged: {
                 if (!activeFocus)
@@ -132,7 +132,7 @@ PluginSettings {
                 return;
 
             const loadedValue = String(settings.loadValue("swbctl", "swbctl") || "swbctl");
-            const boundedValue = SwitchboardModelV4.boundedExecutable(loadedValue);
+            const boundedValue = SwitchboardModelV5.boundedExecutable(loadedValue);
             if (executableField.activeFocus && isInitialized)
                 return;
 
@@ -147,7 +147,7 @@ PluginSettings {
             if (!isInitialized)
                 return;
 
-            const boundedValue = SwitchboardModelV4.boundedExecutable(executableField.text);
+            const boundedValue = SwitchboardModelV5.boundedExecutable(executableField.text);
             if (executableField.text !== boundedValue)
                 executableField.text = boundedValue;
 
@@ -184,7 +184,7 @@ PluginSettings {
 
             width: parent.width
             placeholderText: "swbctl"
-            maximumLength: SwitchboardModelV4.MAX_EXECUTABLE_LENGTH
+            maximumLength: SwitchboardModelV5.MAX_EXECUTABLE_LENGTH
             onEditingFinished: executableSetting.commit()
             onActiveFocusChanged: {
                 if (!activeFocus)

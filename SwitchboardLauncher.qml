@@ -1,16 +1,17 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "SwitchboardModelV4Projects.js" as SwitchboardModelV4
+import "SwitchboardModelV5Close.js" as SwitchboardModelV5
 import qs.Common
+import qs.Services
 
 Item {
     id: root
 
     readonly property string pluginName: "switchboard"
-    readonly property string modelStateKey: "last_good_model_v4_bridge3"
-    readonly property int bridgeContractVersion: 3
-    readonly property int modelContractVersion: 4
+    readonly property string modelStateKey: "last_good_model_v5_bridge4"
+    readonly property int bridgeContractVersion: 4
+    readonly property int modelContractVersion: 5
     readonly property string bridgeExecutable: Paths.strip(Qt.resolvedUrl("switchboard-bridge"))
     readonly property string openerExecutable: Paths.strip(Qt.resolvedUrl("switchboard-open"))
     readonly property string projectManagerExecutable: Paths.strip(Qt.resolvedUrl("switchboard-projects"))
@@ -75,7 +76,7 @@ Item {
     }
 
     function validateFrontendModel(model) {
-        return SwitchboardModelV4.validateModel(model);
+        return SwitchboardModelV5.validateModel(model);
     }
 
     function bridgeFailure(code, message, retryable) {
@@ -134,9 +135,9 @@ Item {
             return;
 
         const configuredExecutable = pluginService.loadPluginData(pluginName, "swbctl", "swbctl");
-        const nextExecutable = SwitchboardModelV4.boundedExecutable(configuredExecutable);
+        const nextExecutable = SwitchboardModelV5.boundedExecutable(configuredExecutable);
         const configuredTerminal = pluginService.loadPluginData(pluginName, "terminal", "ghostty");
-        const nextTerminal = SwitchboardModelV4.boundedExecutable(configuredTerminal, "ghostty");
+        const nextTerminal = SwitchboardModelV5.boundedExecutable(configuredTerminal, "ghostty");
         const nextTimeout = boundedInteger(pluginService.loadPluginData(pluginName, "timeout_ms", 10000), 100, 60000, 10000);
         const nextRefresh = boundedInteger(pluginService.loadPluginData(pluginName, "refresh_seconds", 15), 5, 300, 15);
         const changed = nextExecutable !== swbctlExecutable || nextTerminal !== terminalExecutable || nextTimeout !== timeoutMs || nextRefresh !== refreshSeconds;
@@ -181,7 +182,7 @@ Item {
     }
 
     function fleetIsStale(now) {
-        return lastGoodModel !== null && SwitchboardModelV4.isStale(lastGoodModel, now, refreshSeconds);
+        return lastGoodModel !== null && SwitchboardModelV5.isStale(lastGoodModel, now, refreshSeconds);
     }
 
     function scheduleForRead() {
@@ -197,7 +198,7 @@ Item {
     function getItems(query) {
         Qt.callLater(root.scheduleForRead);
         const now = Date.now();
-        return SwitchboardModelV4.launcherItems(lastGoodModel, query, {
+        return SwitchboardModelV5.launcherItems(lastGoodModel, query, {
             "now": now,
             "loading": runActive || startScheduled,
             "stale": fleetIsStale(now),
@@ -207,7 +208,7 @@ Item {
     }
 
     function getCategories() {
-        return SwitchboardModelV4.launcherCategories(lastGoodModel);
+        return SwitchboardModelV5.launcherCategories(lastGoodModel);
     }
 
     function setCategory(categoryId) {
@@ -226,7 +227,7 @@ Item {
 
         let targetArguments;
         if (item._switchboardKind === "task" && item._taskId)
-            targetArguments = ["--task", item._taskId];
+            targetArguments = item._status === "closed" ? ["--task", item._taskId, "--reopen"] : ["--task", item._taskId];
         else if (item._switchboardKind === "create" && item._projectId && item._checkoutId && item._provider && item._title)
             targetArguments = ["--create", "--project", item._projectId, "--title", item._title, "--checkout", item._checkoutId, "--provider", item._provider];
         else if (item._switchboardKind === "session" && item._sessionKey)
@@ -308,6 +309,16 @@ Item {
             return [];
 
         const result = [];
+        if (item._switchboardKind === "task" && item._status === "open" && item._taskId)
+            result.push({
+                "text": "Close task",
+                "icon": "task_alt",
+                "closeLauncher": true,
+                "action": function () {
+                    root.startAction(item, ["--close-task", item._taskId]);
+                }
+            });
+
         if (item._projectId && item._checkoutId)
             result.push({
                 "text": "Claude history",
@@ -318,9 +329,9 @@ Item {
                 }
             });
 
-        if (item._provider === "claude" && item._canStop && item._sessionKey)
+        if (item._canStop && item._sessionKey)
             result.push({
-                "text": "Stop Claude runtime",
+                "text": "Stop runtime",
                 "icon": "stop_circle",
                 "closeLauncher": true,
                 "action": function () {
@@ -373,9 +384,17 @@ Item {
 
         actionDeadline.stop();
         if (!actionExpired) {
-            const parsed = SwitchboardModelV4.parseActionResponse(actionStdout);
+            const parsed = SwitchboardModelV5.parseActionResponse(actionStdout);
             if (actionExitCode === 0 && parsed.ok) {
                 currentFailure = null;
+                if (parsed.action.kind === "closed") {
+                    if (parsed.action.warning)
+                        ToastService.showWarning("Task closed; runtime cleanup incomplete", parsed.action.warning.message);
+                    else if (parsed.action.runtimeDisposition === "retained" || parsed.action.runtimeDisposition === "unknown")
+                        ToastService.showWarning("Task closed; runtime state is uncertain");
+                    else
+                        ToastService.showInfo(parsed.action.status === "already_closed" ? "Task was already closed" : "Task closed");
+                }
                 scheduleRun(true);
             } else if (!parsed.ok) {
                 setFailure(parsed.error.code, parsed.error.message, parsed.error.retryable);
@@ -388,7 +407,7 @@ Item {
     }
 
     function scheduleRun(refresh) {
-        const plan = SwitchboardModelV4.planRunRequest({
+        const plan = SwitchboardModelV5.planRunRequest({
             "active": runActive || refreshProcess.running,
             "runWasRefresh": runWasRefresh,
             "settingsGeneration": settingsGeneration,
@@ -463,7 +482,7 @@ Item {
     }
 
     function finishStoppedRunIfNeeded(generation, deadline) {
-        const disposition = SwitchboardModelV4.stoppedRunDisposition({
+        const disposition = SwitchboardModelV5.stoppedRunDisposition({
             "runActive": runActive,
             "running": refreshProcess.running,
             "observedRunGeneration": generation,

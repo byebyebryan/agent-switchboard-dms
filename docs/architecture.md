@@ -144,9 +144,9 @@ reliable handoff to the next launcher instance.
 
 `SwitchboardModelV5Close.js` is a new physical module path because Qt may
 retain relative JavaScript imports across a plugin reload. The model contract
-remains v4; changing the path ensures a warm upgrade cannot silently retain the
-pre-project-management category code. Reload-significant envelope and cache
-validation also remains in the launcher QML component.
+advances to v5; changing the path ensures a warm upgrade cannot silently retain
+the pre-close model or behavior. Reload-significant envelope and cache
+validation also remain in the launcher QML component.
 
 The `switchboard-launcher` IPC target exposes only versions, idle/generation
 state, aggregate task/Inbox counts, and a stable failure code. It never emits
