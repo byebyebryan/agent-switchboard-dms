@@ -20,6 +20,7 @@ swbctl prepare-history --project <project-id> --host <host-id> --checkout <check
 swbctl stop-session <session-key> --host <host-id> --json
 swbctl select-surface <surface-id> --host <host-id> --client <tmux-client-id>
 swbctl attach-surface <surface-id> --host <host-id>
+swbctl tui --view projects [--project <project-id> | --add-project]
 ```
 
 Fleet v1 contains individually validated Snapshot v2 documents. It is not a
@@ -28,14 +29,20 @@ PresentationPlan v2 and SessionAction v2 remain the structured action inputs.
 
 ## Process split
 
-`SwitchboardLauncher.qml` owns the synchronous DMS launcher surface and two
-persistent asynchronous Quickshell `Process` objects. `switchboard-bridge`
+`SwitchboardLauncher.qml` owns the synchronous DMS launcher surface and three
+asynchronous Quickshell `Process` objects. `switchboard-bridge`
 validates Fleet v1 and emits frontend model v4. `switchboard-open` asks the
 bridge for a host-qualified plan, performs local niri focus or Ghostty launch,
 and delegates select/attach back to local core. Core decides whether those
 commands execute locally or through bounded SSH.
 
-Both helpers use fixed argv and no shell. The Python runner drains stdout and
+`switchboard-projects` is the third process path. It focuses an existing
+`com.agent_switchboard.projects` window or opens one Ghostty running the public
+core project TUI. It waits without imposing a lifetime deadline, then invokes
+the sibling bridge once with `--refresh` and returns that one Bridge v3 record
+to QML. The wrapper is scoped to the manager window and leaves no daemon.
+
+All three helpers use fixed argv and no shell. The Python runner drains stdout and
 stderr concurrently, bounds bytes and time, starts a separate process group,
 and kills and reaps descendants after timeout, overflow, read/selector
 failure, or an unexpected exception.
@@ -67,6 +74,13 @@ ProjectIds share one native DMS category. Inbox and Closed span all retained
 hosts. Within a project category, a nonempty query emits Codex and Claude
 creation rows for each eligible host; the host is named when more than one
 route qualifies.
+
+A separate static Projects category exists even without a valid model. With a
+model, it shows one compact row for each project that has a local route;
+remote-only projects cannot be edited from this host. Add Project and Manage
+Projects remain explicit catalog actions rather than task rows. Selecting them
+sends at most a ProjectId to the wrapper—never a path, repository URL, or
+mutation payload.
 
 Codex uses `material:terminal`, Claude uses `material:auto_awesome`, and a task
 without a current session uses `material:task_alt`. Absolute checkout paths,
@@ -111,6 +125,12 @@ mutation. Persisted state makes normal shell starts and plugin reloads useful
 immediately. On first install or after cache removal, completed rows appear
 when the launcher is reopened or its query changes.
 
+The project-manager wrapper makes catalog changes converge without a manual
+picker refresh: after the TUI closes, a full bridge read is revalidated by QML
+and saved through the same last-good cache path. `itemsChanged()` is still
+emitted as a best effort, but persisted state—not that ignored signal—is the
+reliable handoff to the next launcher instance.
+
 `SwitchboardModelV4.js` is a new physical module because Qt may retain relative
 JavaScript imports across a plugin reload. Reload-significant envelope and
 cache validation also remains in the cache-busted launcher QML component.
@@ -121,10 +141,12 @@ the model, item text, paths, host IDs, or provider/session IDs.
 
 ## Non-goals
 
-This adapter does not configure remote hosts, run SSH, edit projects,
-repositories, or worktrees, infer provider liveness, accept arbitrary working
-directories, expose tmux locators, add non-niri/non-Ghostty presentation, own a
-chezmoi cutover, or become a rich widget.
+This adapter does not configure remote hosts, run SSH, or itself edit projects,
+repositories, worktrees, or configuration. It opens core's project manager and
+consumes the resulting public snapshot. It also does not infer provider liveness,
+accept arbitrary working directories, expose tmux locators, add
+non-niri/non-Ghostty presentation, own a chezmoi cutover, or become a rich
+widget.
 
 ## Historical contracts
 

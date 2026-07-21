@@ -404,6 +404,35 @@ fetch/open/create/continuation exercise remains pending an explicitly
 configured test host. No provider was launched, stopped, restarted, or
 signalled during this acceptance.
 
+## Phase 6 local project-catalog acceptance
+
+The 2026-07-20 local-first acceptance used the current core `0.2.0` checkout
+installed with its TUI extra, DMS 1.5.2, Quickshell 0.3.0, and Qt 6.11.1. The
+DMS deterministic lane passed 107 Python tests and 17 JavaScript behavior
+groups plus QML formatting, Ruff, Pyright, and whitespace checks.
+
+The installed-import harness copied retained Agent Switchboard state under
+private XDG roots and used only the active shell's display variables. It proved
+that the static Projects category, one Add Project action, one Manage Projects
+action, and exactly the projects with a local route were present. Those checks
+survived cache round-trip, full Fleet refresh, retained executable failure,
+process-start failure, and both recovery paths. The final harness marker was
+`LIVE_INTEGRATION_OK`.
+
+Cross-repository acceptance also used only temporary XDG config/state. A clean
+wheel install completed the path-first dry-run/add/update/archive/restore and
+stable-ID export/import lifecycle; the imported catalog retained ProjectId and
+RepositoryId and generated a new host-local CheckoutId. The actual installed
+`swbctl` was rebuilt from the current checkout, and a headless Textual pilot
+opened `--view projects --project` through that executable and rendered the
+project/repository/checkout hierarchy.
+
+The live DMS service was not reloaded or restarted, and no live picker item was
+selected. Codex, Claude, tmux, SSH, and provider/model processes were not
+launched, stopped, restarted, or signalled. This proves the installed local
+model, cache, core manager, and wrapper contracts without claiming a live
+Ghostty focus/close exercise or remote-host parity.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

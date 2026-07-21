@@ -71,6 +71,16 @@ class LiveIntegrationContractTests(unittest.TestCase):
         self.assertGreaterEqual(self.script.count('s["runGeneration"] > minimum'), 3)
         self.assertGreaterEqual(self.script.count('tail -n 80 "$log_file"'), 2)
 
+    def test_project_category_and_local_rows_are_part_of_installed_harness(self):
+        self.assertIn("function captureProjectSurface", self.qml)
+        self.assertIn('category.id === "projects"', self.qml)
+        self.assertIn('launcher.setCategory("projects")', self.qml)
+        self.assertIn('items[itemIndex]._switchboardKind === "project-add"', self.qml)
+        self.assertIn("projectRows === localProjects", self.qml)
+        self.assertIn("projects=$(ipc captureProjectSurface)", self.script)
+        self.assertIn('s["projectActionsAvailable"]', self.script)
+        self.assertIn('"$repo_root/switchboard-projects"', self.script)
+
     def test_private_state_and_process_group_are_required(self):
         self.assertIn('cp -a -- "$state_source"', self.script)
         self.assertIn('XDG_STATE_HOME="$temporary/state"', self.script)

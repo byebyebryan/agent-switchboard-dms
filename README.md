@@ -17,6 +17,12 @@ The desktop helper generates stable task and request UUIDs and calls atomic
 new-task preparation, so a focus fallback cannot create a second task or
 provider runtime.
 
+The separate Projects category remains available even before a fleet model has
+loaded. It shows only projects with a local route, plus Add Project and Manage
+Projects actions. Those rows open core's complete project catalog manager in a
+singleton Ghostty window; paths and mutation payloads never enter the launcher
+model.
+
 Claude's native history picker and safe launch-owned runtime stop are context
 menu actions. They do not create duplicate search rows. History remains inside
 Claude's unmodified picker, and stop remains subject to core's independent
@@ -32,6 +38,9 @@ SSH, inspect provider transcripts, or own provider/tmux lifecycle.
 `switchboard-open` executes validated host-qualified focus/switch/attach plans
 and delegates final tmux attachment back to local `swbctl attach-surface`.
 Core alone decides whether an action crosses SSH.
+`switchboard-projects` focuses or opens `swbctl tui --view projects`, waits for
+that manager window to close, then runs the sibling bridge's full refresh. It
+does not edit configuration itself or invoke a provider.
 
 The bridge uses only the Python standard library and no third-party Python
 packages. That means dependency-free Python code, not no runtime dependencies.
@@ -58,7 +67,9 @@ reloads immediately useful while a new read runs. Only a first install, a
 cleared cache, or an invalid cache can expose the initial reading row; if that
 row is already open, the new result appears when the launcher is reopened or
 the query changes. Dynamic project categories use DMS's native launcher
-category contract.
+category contract. Closing the project manager performs a bounded full bridge
+refresh and persists its validated result, so the next picker instance sees
+catalog changes without requiring a manual refresh keystroke.
 
 Bounded operational status is available without model contents or stable IDs:
 
@@ -75,6 +86,18 @@ Read retained or fully reconciled state:
 ./switchboard-bridge
 ./switchboard-bridge --refresh
 ```
+
+Open the full project catalog, one selected project, or the add wizard:
+
+```sh
+./switchboard-projects
+./switchboard-projects --project PROJECT-UUID
+./switchboard-projects --add-project
+```
+
+The helper uses the configured `swbctl` and terminal executable tokens. It
+requires the supported niri/Ghostty desktop path and remains alive only while
+the singleton manager window is open.
 
 Open an existing task or exact Inbox session:
 
@@ -115,8 +138,8 @@ Run the complete deterministic check lane:
 
 It covers Fleet v1/model v4 projection, host-qualified task/category/row
 behavior, atomic task argv, remote-owner action routing, niri/Ghostty execution,
-process-group cleanup and fault injection, static QML contracts, and
-documentation.
+project-manager focus/launch/refresh behavior, process-group cleanup and fault
+injection, static QML contracts, and documentation.
 
 Install this checkout as the local development plugin:
 
@@ -154,9 +177,10 @@ explicitly:
 
 It installs rollback traps before mutation; see
 [docs/live-integration.md](docs/live-integration.md) before use. The adapter
-does not perform a chezmoi cutover, construct SSH commands, edit the project
-catalog, accept an arbitrary working-directory launch, expose a direct tmux
-locator, implement non-niri/non-Ghostty adapters, or become a rich widget.
+does not perform a chezmoi cutover, construct SSH commands, write the project
+catalog directly, accept an arbitrary working-directory launch, expose a
+direct tmux locator, implement non-niri/non-Ghostty adapters, or become a rich
+widget. Project mutations occur only inside core's public TUI/CLI contract.
 
 For local diagnostics, also run:
 

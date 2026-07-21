@@ -103,6 +103,42 @@ validated SessionAction v2. Successful desktop execution emits a separate
 `actionVersion: 3` envelope with `focused`, `switched`, `launched`, or
 `stopped`.
 
+## Project catalog handoff
+
+Project management remains a local core surface. DMS starts the wrapper as:
+
+```text
+[SWITCHBOARD_PROJECTS,
+ "--swbctl", EXECUTABLE,
+ "--terminal", TERMINAL,
+ "--timeout-ms", TIMEOUT,
+ optional "--project", PROJECT_ID | optional "--add-project"]
+```
+
+The two optional targets are mutually exclusive. If the exact niri application
+ID `com.agent_switchboard.projects` already exists once, the wrapper focuses it
+and waits for it to close. Otherwise it starts fixed argv:
+
+```text
+[TERMINAL, "--class=com.agent_switchboard.projects", "-e",
+ EXECUTABLE, "tui", "--view", "projects",
+ optional "--project", PROJECT_ID | optional "--add-project"]
+```
+
+The configured timeout bounds each niri and refresh subprocess; it does not
+limit how long a human may use the TUI. After that window closes, the wrapper
+invokes its sibling bridge with:
+
+```text
+[SWITCHBOARD_BRIDGE, "--swbctl", EXECUTABLE,
+ "--timeout-ms", TIMEOUT, "--refresh"]
+```
+
+It forwards exactly one Bridge v3 record plus LF and preserves the
+bridge success/failure exit convention. Wrapper failures use the same Bridge
+v3 error shape. Stderr stays empty. This path invokes no provider, constructs
+no SSH command, reads no core-private state, and leaves no background daemon.
+
 ## Framing and limits
 
 Source stdout must contain exactly one JSON document with no leading or

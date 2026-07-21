@@ -95,7 +95,8 @@ for directory in Common Modules Services Widgets; do
 done
 cp -- "$repo_root/tests/live/Shell.qml" "$temporary/shell.qml"
 cp -- "$repo_root/SwitchboardLauncher.qml" "$repo_root/SwitchboardSettings.qml" \
-    "$repo_root/SwitchboardModelV4.js" "$repo_root/switchboard-bridge" "$temporary/"
+    "$repo_root/SwitchboardModelV4.js" "$repo_root/switchboard-bridge" \
+    "$repo_root/switchboard-projects" "$temporary/"
 cp -a -- "$repo_root/switchboard_dms" "$temporary/switchboard_dms"
 
 live_defer_traps
@@ -149,6 +150,10 @@ json_assert() {
 healthy=$(wait_for "initial retained fleet" 'import json, os, sys; s=json.loads(os.environ["STATE"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"]))')
 json_assert "$healthy" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["settingsHeightPositive"]; assert s["swbctlConfigured"]; assert s["validatorRejectedInvalid"]'
 printf 'INITIAL %s\n' "$healthy"
+
+projects=$(ipc captureProjectSurface)
+json_assert "$projects" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["projectsCategoryAvailable"] and s["projectActionsAvailable"] and s["localProjectRowsMatch"]'
+printf 'PROJECTS %s\n' "$projects"
 
 cached=$(ipc reloadCachedModel)
 json_assert "$cached" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["hasModel"] and s["cacheReloaded"] and s["failureCode"] == ""'

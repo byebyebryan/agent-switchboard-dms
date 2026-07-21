@@ -12,6 +12,9 @@ ShellRoot {
     property double refreshBaselineGeneratedAt: -1
     property bool queryMatchedExact: false
     property bool cacheReloaded: false
+    property bool projectsCategoryAvailable: false
+    property bool projectActionsAvailable: false
+    property bool localProjectRowsMatch: false
 
     function modelFingerprint() {
         return launcher.lastGoodModel ? JSON.stringify(launcher.lastGoodModel) : "";
@@ -29,6 +32,9 @@ ShellRoot {
             "entryCount": tasks.length + inbox.length,
             "failureCode": launcher.currentFailure ? launcher.currentFailure.code : "",
             "cacheReloaded": root.cacheReloaded,
+            "projectsCategoryAvailable": root.projectsCategoryAvailable,
+            "projectActionsAvailable": root.projectActionsAvailable,
+            "localProjectRowsMatch": root.localProjectRowsMatch,
             "validatorRejectedInvalid": launcher.parseCurrentBridgeResponse("{\"bridgeVersion\":1}").error.code === "bridge_incompatible" && !launcher.validateFrontendModel({}),
             "queryMatchedExact": root.queryMatchedExact,
             "refreshGeneratedAtAdvanced": model !== null && root.refreshBaselineGeneratedAt >= 0 && model.generatedAt > root.refreshBaselineGeneratedAt,
@@ -150,6 +156,35 @@ ShellRoot {
                     matches += 1;
             }
             root.queryMatchedExact = matches === 1;
+            return root.summary();
+        }
+
+        function captureProjectSurface(): string {
+            const model = launcher.lastGoodModel;
+            const projects = model && Array.isArray(model.projects) ? model.projects : [];
+            const categories = launcher.getCategories();
+            let localProjects = 0;
+            for (let projectIndex = 0; projectIndex < projects.length; projectIndex++) {
+                if (projects[projectIndex].routes.some(route => route.isLocal))
+                    localProjects += 1;
+            }
+            root.projectsCategoryAvailable = categories.some(category => category.id === "projects");
+            launcher.setCategory("projects");
+            const items = launcher.getItems("");
+            let addActions = 0;
+            let manageAllActions = 0;
+            let projectRows = 0;
+            for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+                if (items[itemIndex]._switchboardKind === "project-add")
+                    addActions += 1;
+                else if (items[itemIndex]._switchboardKind === "project-manager" && items[itemIndex]._projectId)
+                    projectRows += 1;
+                else if (items[itemIndex]._switchboardKind === "project-manager")
+                    manageAllActions += 1;
+            }
+            launcher.setCategory("");
+            root.projectActionsAvailable = addActions === 1 && manageAllActions === 1;
+            root.localProjectRowsMatch = projectRows === localProjects;
             return root.summary();
         }
 

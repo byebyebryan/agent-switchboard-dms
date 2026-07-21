@@ -7,7 +7,9 @@
 > actions. Phase 4E hardens that frontend against shell-local JavaScript cache
 > retention and cold QML instances. Phase 5 advances the current adapter to
 > Fleet v1, frontend model v4, bridge/action v3, and host-qualified local-core
-> actions. See `architecture.md` and `bridge-contract.md` for the current core
+> actions. Phase 6 exposes the core-owned local project catalog through a
+> dedicated DMS category and focused TUI handoff. See `architecture.md` and
+> `bridge-contract.md` for the current core
 > `0.2.0` development / adapter `0.3.0` contract.
 
 ## Phase 0: discovery and contract lock (complete)
@@ -319,6 +321,35 @@ exercise additionally requires an explicitly configured reachable test host;
 local-only acceptance must be recorded as such rather than presented as SSH
 parity.
 
+## Phase 6: local project catalog handoff (implementation complete)
+
+This local-first follow-up closes the catalog UX gap before guarded two-host
+acceptance:
+
+- Projects is a static category even when the Fleet model is unavailable;
+- the list contains Add Project, Manage Projects, and one compact row per
+  project with a local route, while remote-only projects stay out;
+- project rows carry only stable ProjectId and display metadata from model v4;
+- `switchboard-projects` focuses or launches one Ghostty running
+  `swbctl tui --view projects`, with optional selected-project or add-wizard
+  startup;
+- the wrapper lives only while that manager window exists, then requests one
+  full bridge refresh and returns its Bridge v3 response to QML; and
+- QML fully revalidates and persists that result, making the next picker read
+  useful despite DMS 1.5 ignoring `itemsChanged()`.
+
+Core remains the sole catalog writer and owns path inspection, atomic config
+replacement, backups, archive blockers, and export/import. DMS does not edit
+projects directly, receive paths, or carry mutation payloads. The wrapper
+opens no provider or tmux session and leaves no daemon.
+
+Deterministic implementation acceptance covers fixed terminal/TUI/refresh
+argv, exact niri singleton matching, focus and launch paths, structured
+failures, local-only projection, no-model Add/Manage access, QML cache handoff,
+107 Python tests, 17 JavaScript behavior groups, QML formatting, Ruff, Pyright,
+and whitespace checks. Guarded private-state and installed local acceptance is
+recorded separately in `live-integration.md`.
+
 ## Final audit and publication
 
 - Re-run all unit, JSON, shell, QML, fixture, and whitespace checks.
@@ -327,7 +358,7 @@ parity.
 - Publish both repositories only after the full gates pass and the user has
   explicitly authorized the push.
 
-SSH construction inside DMS, arbitrary working-directory launch,
-project-catalog editing, direct tmux locator or provider-launch logic,
+SSH construction inside DMS, direct DMS configuration writes, arbitrary
+working-directory launch, direct tmux locator or provider-launch logic,
 non-niri/non-Ghostty adapters, chezmoi cutover, and a rich widget remain
 non-goals for this increment.
