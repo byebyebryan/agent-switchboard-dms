@@ -437,6 +437,38 @@ launched, stopped, restarted, or signalled. This proves the installed local
 model, cache, core manager, and wrapper contracts without claiming a live
 Ghostty focus/close exercise or remote-host parity.
 
+## Phase 7 frictionless-close acceptance
+
+The 2026-07-21 acceptance used DMS 1.5.2, Quickshell 0.3.0, Qt 6.11.1,
+adapter `0.4.0`, and core `0.2.0` installed from the current checkout with its
+TUI extra. The deterministic lane passed 113 Python tests, 17 JavaScript
+behavior groups, QML formatting, Ruff, Pyright, and whitespace checks.
+
+The installed-import harness ran on the active Wayland display but copied a
+synthetic registry under private XDG roots. It started with one Open and one
+Closed task in a test-only project and reached `LIVE_INTEGRATION_OK`: bridge
+4/model 5, model/cache round trip, exact task query, Projects rows, full Fleet
+refresh, last-good retention through both failure modes, and recovery all
+passed. The initial terminal lacked display variables; the successful run used
+only the active DMS process's display/session variables.
+
+The DMS desktop helper then closed the private Open task with Action v4 and
+`runtimeDisposition=no_session`. A bridge reopen request returned the expected
+`project_provider_missing` blocked plan because the synthetic project
+deliberately had no provider, while a following Fleet read showed that the task
+had already moved back to Open. This proves state-first close/reopen and the
+v4/v5 adapter boundary without a provider launch, prompt, model call, or user
+session mutation.
+
+The long-lived development shell rejected the newly introduced
+`SwitchboardModelV5Close.js` during plugin-only reload with Qt's `File name case
+mismatch`, including with an all-lowercase diagnostic filename. A fresh
+isolated Quickshell process loaded the module, and one DMS-only restart loaded
+the installed plugin at bridge 4/model 5 with no failure. The restart was
+guarded by the tmux server PID and a hash of every pane ID/PID pair; both were
+identical before and after. No Codex or Claude runtime was launched, stopped,
+restarted, adopted, or signalled.
+
 ## Qt 6 and automation boundary
 
 Use the Qt 6 tools explicitly on the evidence machine:

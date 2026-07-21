@@ -350,11 +350,11 @@ opens no provider or tmux session and leaves no daemon.
 Deterministic implementation acceptance covers fixed terminal/TUI/refresh
 argv, exact niri singleton matching, focus and launch paths, structured
 failures, local-only projection, no-model Add/Manage access, QML cache handoff,
-107 Python tests, 17 JavaScript behavior groups, QML formatting, Ruff, Pyright,
+113 Python tests, 17 JavaScript behavior groups, QML formatting, Ruff, Pyright,
 and whitespace checks. Guarded private-state and installed local acceptance is
 recorded separately in `live-integration.md`.
 
-## Phase 7: frictionless close and one-action reopen (implementation contract)
+## Phase 7: frictionless close and one-action reopen (complete)
 
 - Open task rows expose **Close task** as their first secondary action through
   both keyboard navigation and the context menu.
@@ -376,6 +376,16 @@ validation, keyboard/context action coverage, toast and refresh behavior,
 closed-runtime rendering, warm-cache busting, and a guarded private-state
 installed run. Live provider checks may use only test-owned blank sessions and
 must not signal existing user sessions.
+
+Acceptance completed on 2026-07-21. The deterministic lane passed 113 Python
+tests, 17 JavaScript behavior groups, QML formatting, Ruff, Pyright, and
+whitespace checks. The current core checkout was installed with its TUI extra.
+A private-XDG project with one Open and one Closed task proved Action v4
+`no_session` close, state-first reopen, and Bridge v4/model v5 projection
+without launching a provider. The installed-import harness passed against that
+private state, and the live plugin reported bridge 4/model 5 after the one
+DMS-only restart required to admit the new JavaScript module path. The tmux
+server PID and pane-PID fingerprint were identical across that restart.
 
 ## Final audit and publication
 

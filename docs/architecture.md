@@ -146,7 +146,11 @@ reliable handoff to the next launcher instance.
 retain relative JavaScript imports across a plugin reload. The model contract
 advances to v5; changing the path ensures a warm upgrade cannot silently retain
 the pre-close model or behavior. Reload-significant envelope and cache
-validation also remain in the launcher QML component.
+validation also remain in the launcher QML component. DMS 1.5.2/Qt 6.11 may
+reject a newly introduced relative script path with `File name case mismatch`
+inside an already-running development shell even when the spelling is exact.
+That one module-adding upgrade requires a DMS-only restart; fresh processes and
+later reloads consume the versioned path normally.
 
 The `switchboard-launcher` IPC target exposes only versions, idle/generation
 state, aggregate task/Inbox counts, and a stable failure code. It never emits

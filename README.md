@@ -160,6 +160,12 @@ dms ipc call plugins enable switchboard
 dms ipc call plugins reload switchboard
 ```
 
+When an upgrade introduces a new relative JavaScript module filename, DMS
+1.5.2/Qt 6.11 may reject that file during a long-lived development-plugin hot
+reload. Run `dms restart` once for that upgrade; it restarts only the shell and
+does not own or stop Switchboard's tmux/provider runtimes. Subsequent reloads
+reuse the versioned module and cache normally.
+
 `dev-plugin` creates only a `switchboard` symlink in the DMS user plugin
 directory and refuses foreign or unsafe destinations. Remove only this
 checkout's link with:
