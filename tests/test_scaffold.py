@@ -243,6 +243,10 @@ class DocumentationContractTests(unittest.TestCase):
         )
         cls.normalized_readme = " ".join(cls.readme.split())
         cls.normalized_bridge_contract = " ".join(cls.bridge_contract.split())
+        cls.view_entry_plan = (ROOT / "docs" / "view-entry-plan.md").read_text(
+            encoding="utf-8"
+        )
+        cls.normalized_view_entry_plan = " ".join(cls.view_entry_plan.split())
         cls.docs = "\n".join(
             (ROOT / relative).read_text(encoding="utf-8")
             for relative in ("docs/architecture.md", "docs/implementation-plan.md")
@@ -333,6 +337,7 @@ class DocumentationContractTests(unittest.TestCase):
                 self.assertIn(command, live)
         self.assertIn("no launcher-result query IPC", live)
         self.assertIn("Quickshell 0.3.0", live)
+
         self.assertIn("Qt 6.11.1", live)
         self.assertIn("dms ipc call launcher openQuery 'sb:switchboard'", live)
         self.assertIn("journalctl --user -u dms.service", live)
@@ -344,6 +349,20 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("did not leave a retained `SessionStart` event", live)
         self.assertIn("Phase 3A live DMS acceptance", live)
         self.assertNotIn("dms logs", live)
+
+    def test_view_entry_clean_break_is_documented(self):
+        for phrase in (
+            "Status: accepted replacement design; implementation pending",
+            "NavigatorState v1",
+            "ViewAction v1",
+            "Views",
+            "Projects",
+            "Recovery",
+            "There is no compatibility mode",
+            "last_good_switchboard_entry_model_v1",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.normalized_view_entry_plan)
 
 
 class DevelopmentWorkflowTests(unittest.TestCase):

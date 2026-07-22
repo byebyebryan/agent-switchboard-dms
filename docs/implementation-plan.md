@@ -1,5 +1,11 @@
 # Implementation plan
 
+> The phases below are the implemented `0.4.x` task-first history. They are not
+> the forward roadmap. The next release is the coordinated, incompatible
+> Views/Projects/Recovery replacement in
+> [View-Entry Clean-Break Plan](view-entry-plan.md). It does not retain these
+> protocols or frontend behaviors as compatibility surfaces.
+
 > Historical chronology: Phases 1 through 3C below describe the retired
 > Snapshot v1/location/session-list implementation. Phase 4D replaces that
 > runtime with Snapshot v2, repositories/checkouts/tasks, frontend model v3,

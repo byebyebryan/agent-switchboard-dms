@@ -1,5 +1,9 @@
 # Bridge and Desktop Contract v4
 
+> Current `0.4.x` contract only. Adapter `0.5.0` deletes this bridge/model/action
+> generation and implements the incompatible entry-model v1 contract specified
+> in [View-Entry Clean-Break Plan](view-entry-plan.md).
+
 ## Fleet mode
 
 The retained invocation is exactly:

@@ -1,5 +1,10 @@
 # Architecture
 
+> This is the currently implemented adapter `0.4.1` architecture. It remains
+> authoritative only until the coordinated Phase 6 activation. The accepted
+> replacement is [View-Entry Clean-Break Plan](view-entry-plan.md); none of the
+> Fleet/task/session command boundary below survives that cutover.
+
 ## Ownership boundary
 
 The plugin is a strict frontend for one user-configured local `swbctl`. Core

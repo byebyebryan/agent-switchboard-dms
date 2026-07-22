@@ -1,5 +1,10 @@
 # Switchboard for DMS
 
+> Current runtime: adapter `0.4.1` with the task-first core `0.2.0` contract.
+> Accepted replacement: adapter `0.5.0` becomes a Views/Projects/Recovery entry
+> picker during the coordinated Agent Switchboard Phase 6 clean break. There is
+> no compatibility mode. See [the view-entry plan](docs/view-entry-plan.md).
+
 Switchboard is the task-first DankMaterialShell launcher for local and
 configured remote Agent Switchboard work. Its default view lists open tasks,
 merges compatible projects across hosts, keeps unassigned provider sessions in
