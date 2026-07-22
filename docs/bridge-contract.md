@@ -1,190 +1,47 @@
-# Bridge and Desktop Contract v4
+# Bridge and Desktop Contract v1
 
-> Current `0.4.x` contract only. Adapter `0.5.0` deletes this bridge/model/action
-> generation and implements the incompatible entry-model v1 contract specified
-> in [View-Entry Clean-Break Plan](view-entry-plan.md).
+## Bridge
 
-## Fleet mode
-
-The retained invocation is exactly:
+The only reads are:
 
 ```text
-[EXECUTABLE, "fleet", "--json"]
+[SWBCTL, "state", "navigator", "--json"]
+[SWBCTL, "state", "navigator", "--refresh", "--json"]
 ```
 
-The refresh invocation is exactly:
-
-```text
-[EXECUTABLE, "fleet", "--refresh", "--json"]
-```
-
-`EXECUTABLE` is one configured token, not a shell command. The bridge uses only
-the Python standard library; this means no third-party Python packages, not no
-runtime dependencies.
-
-The bridge accepts one Fleet v1 document containing bounded, individually
-validated Snapshot v2 documents. It validates host order, stable identities,
-reachability/error rules, embedded snapshot ownership and timestamps, and
-Snapshot project/repository/checkout/task/session backreferences. It emits
-bridge v4 and frontend model v5:
+The successful output is one canonical record plus LF:
 
 ```json
-{"bridgeVersion":4,"model":{"modelVersion":5,"sourceSchemaVersion":2,"sourceProtocolVersion":2,"sourceFleetVersion":1},"ok":true}
+{"bridgeVersion":1,"model":{"modelVersion":1,"sourceNavigatorVersion":1},"ok":true}
 ```
 
-Model v5 merges compatible projects by ProjectId but retains per-host routes.
-Task identity is `(HostId, TaskId)` and Inbox identity remains the canonical
-host-qualified session key. A remote before first success can appear as a host
-without rows. An unavailable remote can retain last-good rows marked offline
-or stale. SSH targets and absolute paths are never projected.
+NavigatorState must use schema/protocol/navigator version 1, canonical UUIDs and
+ordering, one exact local host/generation, valid owner references, bounded text
+and collections, and no sensitive future field. Failures are structured,
+bounded, contain no source stderr/stdout, and exit 1. All subprocesses use fixed
+argv, concurrent bounded drains, a process group, timeout, kill, and reap.
 
-Fleet or Snapshot v1 produces `fleet_invalid_protocol`. Unknown safe source
-fields are ignored. Sensitive future fields, terminal controls, invalid UTF-8,
-non-finite numbers, excessive nesting/count/size, malformed UUIDs, and
-inconsistent references fail closed.
+## Desktop action
 
-## Prepare modes
+One activation uses exactly one of `--view`, `--project`, or `--recovery`. The
+helper creates a request UUID and invokes the corresponding core v1 route with
+`--can-focus-desktop --can-launch-terminal --json`. A focus miss repeats the
+identical host/target/request with `--no-focus-desktop`.
 
-Every action carries the owning HostId to the configured local core. Exact argv
-is:
+`PresentationDirective v1` must match the requested host and request. `focus`
+and `attach` require a view revision and opaque desktop token; only `attach`
+has an expiry. `blocked` contains only a bounded error. A fallback must be an
+attach for the same view and token.
+
+Ghostty starts only:
 
 ```text
-[EXECUTABLE, "prepare-open", SESSION_KEY,
- "--host", HOST_ID, "--request-id", UUID,
- "--can-focus-desktop", "--can-launch-terminal", "--json"]
-
-[EXECUTABLE, "prepare-task", TASK_ID,
- "--host", HOST_ID, "--request-id", UUID,
- "--can-focus-desktop", "--can-launch-terminal", "--json"]
-
-[EXECUTABLE, "prepare-task", TASK_ID,
- "--host", HOST_ID, "--reopen", "--request-id", UUID,
- "--can-focus-desktop", "--can-launch-terminal", "--json"]
-
-[EXECUTABLE, "prepare-task", TASK_ID, "--host", HOST_ID, "--create",
- "--project", PROJECT_ID, "--title", TITLE,
- "--checkout", CHECKOUT_ID, "--provider", PROVIDER,
- "--request-id", UUID, "--can-focus-desktop",
- "--can-launch-terminal", "--json"]
-
-[EXECUTABLE, "prepare-history", "--project", PROJECT_ID,
- "--host", HOST_ID, "--checkout", CHECKOUT_ID,
- "--request-id", UUID, "--can-focus-desktop",
- "--can-launch-terminal", "--json"]
+[SYSTEMD_RUN, "--user", "--scope", "--collect", "--quiet", "--",
+ GHOSTTY, "--class=" + OPAQUE_APP_ID, "-e",
+ SWBCTL, "view", "attach", "--host", HOST,
+ "--view", VIEW, "--request-id", REQUEST]
 ```
 
-Checkout is optional at the bridge/desktop boundary when core can resolve the
-host-local default. DMS creation rows include an eligible default checkout.
-
-Successful prepare responses contain one independently validated
-PresentationPlan v2:
-
-```json
-{"bridgeVersion":4,"ok":true,"plan":{"hostId":"11111111-1111-4111-8111-111111111111","kind":"focus","surfaceId":"33333333-3333-4333-8333-333333333333","desktopToken":"opaque"}}
-```
-
-The plan HostId must equal the requested owner. `switchboard-open` generates
-request IDs and, for creation, the TaskId. A focus miss repeats the same target
-and request with desktop focus disabled, preserving core idempotency.
-
-## Close, stop, select, and attach
-
-Task close, explicit runtime stop, and in-terminal selection use:
-
-```text
-[EXECUTABLE, "task", "close", TASK_ID,
- "--host", HOST_ID, "--json"]
-
-[EXECUTABLE, "stop-session", SESSION_KEY,
- "--host", HOST_ID, "--json"]
-
-[EXECUTABLE, "select-surface", SURFACE_ID,
- "--host", HOST_ID, "--client", TMUX_CLIENT]
-```
-
-The launched Ghostty executes only:
-
-```text
-[EXECUTABLE, "attach-surface", SURFACE_ID, "--host", HOST_ID]
-```
-
-Core decides whether a host-qualified command is local or remote. DMS never
-constructs SSH argv and never receives a raw tmux target. Close consumes one
-validated TaskCloseAction v2; stop consumes SessionAction v2. Successful
-desktop execution emits a separate `actionVersion: 4` envelope with
-`focused`, `switched`, `launched`, `closed`, or `stopped`.
-
-Close has no stdin and cannot carry a handoff, summary, confirmation, prompt,
-or model-generated content. A successful `closed`/`already_closed` result may
-include a bounded cleanup warning and one runtime disposition:
-`no_session`, `already_stopped`, `stopped`, `retained`, or `unknown`. DMS
-refreshes Fleet after every successful close. Opening a Closed row sends
-`--reopen` and presents the resulting plan as one user action.
-
-## Project catalog handoff
-
-Project management remains a local core surface. DMS starts the wrapper as:
-
-```text
-[SWITCHBOARD_PROJECTS,
- "--swbctl", EXECUTABLE,
- "--terminal", TERMINAL,
- "--timeout-ms", TIMEOUT,
- optional "--project", PROJECT_ID | optional "--add-project"]
-```
-
-The two optional targets are mutually exclusive. If the exact niri application
-ID `com.agent_switchboard.projects` already exists once, the wrapper focuses it
-and waits for it to close. Otherwise it starts fixed argv:
-
-```text
-[TERMINAL, "--class=com.agent_switchboard.projects", "-e",
- EXECUTABLE, "tui", "--view", "projects",
- optional "--project", PROJECT_ID | optional "--add-project"]
-```
-
-The configured timeout bounds each niri and refresh subprocess; it does not
-limit how long a human may use the TUI. After that window closes, the wrapper
-invokes its sibling bridge with:
-
-```text
-[SWITCHBOARD_BRIDGE, "--swbctl", EXECUTABLE,
- "--timeout-ms", TIMEOUT, "--refresh"]
-```
-
-It forwards exactly one Bridge v4 record plus LF and preserves the
-bridge success/failure exit convention. Wrapper failures use the same Bridge
-v4 error shape. Stderr stays empty. This path invokes no provider, constructs
-no SSH command, reads no core-private state, and leaves no background daemon.
-
-## Framing and limits
-
-Source stdout must contain exactly one JSON document with no leading or
-trailing JSON whitespace except one optional final LF. Stderr is drained but
-never copied into frontend output. The bridge emits one canonical JSON object
-plus LF, keeps stderr empty, exits 0 for success, and exits 1 for a structured
-failure. Argument errors are argparse exit 2 with empty stdout.
-
-The bridge bounds source bytes, JSON depth, strings, arrays, objects, hosts,
-project routes, tasks, Inbox sessions, warnings, and final output.
-`--max-sessions` limits Inbox projection; task rows have a separate bound.
-Timeout, output overflow, read/selector failure, and unexpected exceptions
-kill and reap the entire child process group.
-
-Representative failures are:
-
-| Code | Retryable | Meaning |
-| --- | --- | --- |
-| `fleet_invalid_utf8` | no | Source output was not UTF-8. |
-| `fleet_invalid_json` | no | Framing or JSON syntax was invalid. |
-| `fleet_invalid_protocol` | no | The document was not compatible Fleet v1. |
-| `plan_invalid_protocol` | no | The document was not PresentationPlan v2. |
-| `close_invalid_protocol` | no | The document was not TaskCloseAction v2. |
-| `desktop_plan_host_mismatch` | no | Core returned a plan for another host. |
-| `swbctl_nonzero_exit` | yes | Core exited unsuccessfully. |
-| `process_timeout` | yes | The configured deadline expired. |
-| `stdout_overflow` | no | Source stdout exceeded the byte limit. |
-| `bridge_output_overflow` | no | The frontend envelope exceeded its limit. |
-
-The bridge is frontend glue. It does not read SQLite, invoke providers, inspect
-transcripts, run Git or SSH, or manage tmux directly.
+The desktop result is action v1 with `focused` or `launched`. There is no switch,
+task, session, history, close, reopen, stop, checkout, provider, SSH, or tmux
+desktop action.

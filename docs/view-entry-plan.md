@@ -2,7 +2,7 @@
 
 Date: 2026-07-21
 
-Status: Phase 6A.1 contract repair complete; implementation pending
+Status: implemented; installed two-host activation pending
 
 Target adapter release: `0.5.0`
 

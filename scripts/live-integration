@@ -3,14 +3,12 @@ set -eu
 
 usage() {
     cat <<'EOF'
-Usage: scripts/live-integration --swbctl EXECUTABLE [--dms-root DIRECTORY]
-                                [--state-source DIRECTORY]
+Usage: scripts/live-integration --swbctl EXECUTABLE
+                                --config-root DIRECTORY --state-root DIRECTORY
+                                [--dms-root DIRECTORY]
 
-Exercise the launcher and settings components in a temporary Quickshell
-configuration built from the installed DMS imports. This does not prove DMS
-plugin discovery or shell reload; use the documented `dms ipc call` workflow
-for that separate evidence. A private copy of the Agent Switchboard state is
-required so retained and full refreshes cannot mutate the user's registry.
+Run the DMS 0.5 launcher/settings components in a fresh Quickshell process
+against an isolated core 0.3 generation. The caller owns the supplied roots.
 EOF
 }
 
@@ -20,96 +18,69 @@ die() {
 }
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-. "$repo_root/scripts/live-cleanup.sh"
 dms_root=${DMS_QML_ROOT:-/usr/share/quickshell/dms}
-state_source=${SWITCHBOARD_STATE_SOURCE:-${XDG_STATE_HOME:-${HOME:?HOME is not set}/.local/state}/agent-switchboard}
 swbctl=
+config_root=
+state_root=
 temporary=
-log_file=
 harness_pid=
 
-# Cleanup is valid before the first artifact-producing command. Signals stay
-# deferred until any launched process group has been published.
-live_cleanup_init "" "" ""
-live_defer_traps
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ "${harness_pid:-}" ]; then
+        kill -- -"$harness_pid" 2>/dev/null || true
+        wait "$harness_pid" 2>/dev/null || true
+    fi
+    if [ "${temporary:-}" ]; then
+        rm -rf -- "$temporary"
+    fi
+    exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
 
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --swbctl)
-            [ "$#" -ge 2 ] || die "--swbctl requires a value"
-            swbctl=$2
-            shift 2
-            ;;
-        --dms-root)
-            [ "$#" -ge 2 ] || die "--dms-root requires a value"
-            dms_root=$2
-            shift 2
-            ;;
-        --state-source)
-            [ "$#" -ge 2 ] || die "--state-source requires a value"
-            state_source=$2
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            usage >&2
-            die "unknown argument: $1"
-            ;;
+        --swbctl) [ "$#" -ge 2 ] || die "--swbctl requires a value"; swbctl=$2; shift 2 ;;
+        --config-root) [ "$#" -ge 2 ] || die "--config-root requires a value"; config_root=$2; shift 2 ;;
+        --state-root) [ "$#" -ge 2 ] || die "--state-root requires a value"; state_root=$2; shift 2 ;;
+        --dms-root) [ "$#" -ge 2 ] || die "--dms-root requires a value"; dms_root=$2; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; die "unknown argument: $1" ;;
     esac
 done
 
-[ "$swbctl" ] || die "--swbctl is required"
-[ -x "$swbctl" ] || die "swbctl is not executable: $swbctl"
-swbctl=$(realpath -e -- "$swbctl")
-[ -f "$dms_root/shell.qml" ] || die "DMS QML root is invalid: $dms_root"
-dms_root=$(CDPATH= cd -- "$dms_root" && pwd -P)
-command -v qs >/dev/null 2>&1 || die "qs is not installed"
-command -v python3 >/dev/null 2>&1 || die "python3 is not installed"
-command -v rg >/dev/null 2>&1 || die "rg is not installed"
-command -v setsid >/dev/null 2>&1 || die "setsid is not installed"
-[ -d "$state_source" ] || die "Agent Switchboard state source is missing: $state_source"
-[ ! -L "$state_source" ] || die "state source must not be a symlink: $state_source"
-state_source=$(CDPATH= cd -- "$state_source" && pwd -P)
-[ "$(stat -c '%u' "$state_source")" = "$(id -u)" ] || die "state source is not owned by the current user"
-if find "$state_source" -type l -print -quit | rg -q .; then
-    die "state source must not contain symlinks"
-fi
+[ -x "$swbctl" ] || die "swbctl is not executable"
+[ -d "$config_root" ] || die "config root is missing"
+[ -d "$state_root" ] || die "state root is missing"
+[ -f "$dms_root/shell.qml" ] || die "DMS QML root is invalid"
+for command in qs python3 setsid; do
+    command -v "$command" >/dev/null 2>&1 || die "$command is not installed"
+done
 
-live_activate_traps
-live_defer_traps
-temporary=$(mktemp -d "${TMPDIR:-/tmp}/switchboard-live.XXXXXX")
-live_cleanup_init "" "" "$temporary"
-log_file=$temporary/quickshell.log
-live_activate_traps
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/switchboard-live-v1.XXXXXX")
 chmod 700 "$temporary"
 mkdir -m 700 "$temporary/config" "$temporary/state" "$temporary/cache" "$temporary/data"
-cp -a -- "$state_source" "$temporary/state/agent-switchboard"
-chmod -R go-rwx "$temporary/state/agent-switchboard"
-
 for directory in Common Modules Services Widgets; do
-    [ -d "$dms_root/$directory" ] || die "installed DMS import is missing: $dms_root/$directory"
+    [ -d "$dms_root/$directory" ] || die "installed DMS import is missing: $directory"
     ln -s -- "$dms_root/$directory" "$temporary/$directory"
 done
 cp -- "$repo_root/tests/live/Shell.qml" "$temporary/shell.qml"
 cp -- "$repo_root/SwitchboardLauncher.qml" "$repo_root/SwitchboardSettings.qml" \
-    "$repo_root/SwitchboardModelV5Badges.js" "$repo_root/switchboard-bridge" \
-    "$repo_root/switchboard-projects" "$temporary/"
+    "$repo_root/SwitchboardEntryModelV1.js" "$repo_root/switchboard-bridge" \
+    "$repo_root/switchboard-open" "$temporary/"
 cp -a -- "$repo_root/switchboard_dms" "$temporary/switchboard_dms"
 
-live_defer_traps
 setsid env \
     XDG_CONFIG_HOME="$temporary/config" \
     XDG_STATE_HOME="$temporary/state" \
     XDG_CACHE_HOME="$temporary/cache" \
     XDG_DATA_HOME="$temporary/data" \
+    SWB_V3_CONFIG_ROOT="$config_root" \
+    SWB_V3_STATE_ROOT="$state_root" \
     SWITCHBOARD_LIVE_SWBCTL="$swbctl" \
-    qs -p "$temporary" --no-color --log-times >"$log_file" 2>&1 &
+    qs -p "$temporary" --no-color --log-times >"$temporary/quickshell.log" 2>&1 &
 harness_pid=$!
-live_cleanup_init "$harness_pid" "$harness_pid" "$temporary"
-live_activate_traps
 
 ipc() {
     qs -p "$temporary" ipc call switchboard-live "$@"
@@ -118,85 +89,40 @@ ipc() {
 wait_for() {
     description=$1
     predicate=$2
-    shift 2
     attempts=0
     while [ "$attempts" -lt 200 ]; do
-        if ! kill -0 "$harness_pid" 2>/dev/null; then
-            if [ -f "$log_file" ]; then
-                tail -n 80 "$log_file" >&2 || true
-            fi
+        kill -0 "$harness_pid" 2>/dev/null || {
+            tail -n 80 "$temporary/quickshell.log" >&2 || true
             die "Quickshell exited while waiting for $description"
-        fi
+        }
         state=$(ipc status 2>/dev/null || true)
-        if [ "$state" ] && env "$@" STATE="$state" python3 -c "$predicate" 2>/dev/null; then
+        if [ "$state" ] && STATE=$state python3 -c "$predicate" 2>/dev/null; then
             printf '%s\n' "$state"
             return 0
         fi
         attempts=$((attempts + 1))
         sleep 0.05
     done
-    if [ -f "$log_file" ]; then
-        tail -n 80 "$log_file" >&2 || true
-    fi
+    tail -n 80 "$temporary/quickshell.log" >&2 || true
     die "timed out waiting for $description"
 }
 
-json_assert() {
-    state=$1
-    assertion=$2
-    STATE=$state python3 -c "$assertion"
-}
-
-healthy=$(wait_for "initial retained fleet" 'import json, os, sys; s=json.loads(os.environ["STATE"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"]))')
-json_assert "$healthy" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["settingsHeightPositive"]; assert s["swbctlConfigured"]; assert s["validatorRejectedInvalid"]'
-printf 'INITIAL %s\n' "$healthy"
-
-projects=$(ipc captureProjectSurface)
-json_assert "$projects" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["projectsCategoryAvailable"] and s["projectActionsAvailable"] and s["localProjectRowsMatch"]'
-printf 'PROJECTS %s\n' "$projects"
-
+initial=$(wait_for "fresh entry model" 'import json,os,sys;s=json.loads(os.environ["STATE"]);sys.exit(not(s["idle"] and s["hasModel"] and s["fresh"] and not s["failureCode"]))')
+printf 'INITIAL %s\n' "$initial"
+categories=$(ipc captureCategories)
+CATEGORIES=$categories python3 -c 'import json,os;s=json.loads(os.environ["CATEGORIES"]);assert s["categoriesValid"]'
+printf 'CATEGORIES %s\n' "$categories"
+baseline=$(ipc captureBaseline)
+BASELINE=$baseline python3 -c 'import json,os;s=json.loads(os.environ["BASELINE"]);assert s["queryMatchedExact"]'
+printf 'QUERY %s\n' "$baseline"
 cached=$(ipc reloadCachedModel)
-json_assert "$cached" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["hasModel"] and s["cacheReloaded"] and s["failureCode"] == ""'
-printf 'CACHE %s\n' "$cached"
-
-queried=$(ipc captureBaseline)
-json_assert "$queried" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0; assert s["queryMatchedExact"]'
-printf 'QUERY %s\n' "$queried"
-
-focused=$(ipc focusSettings)
-json_assert "$focused" 'import json, os; s=json.loads(os.environ["STATE"]); assert s["settingsHeightPositive"]; assert s["settingsFocused"]'
-printf 'SETTINGS %s\n' "$focused"
-
-before_generation=$(STATE=$healthy python3 -c 'import json, os; print(json.loads(os.environ["STATE"])["runGeneration"])')
+CACHED=$cached python3 -c 'import json,os;s=json.loads(os.environ["CACHED"]);assert s["cacheReloaded"] and not s["fresh"]'
+printf 'WARM_CACHE %s\n' "$cached"
 ipc refresh >/dev/null
-refreshed=$(wait_for "full refresh" 'import json, os, sys; s=json.loads(os.environ["STATE"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["runGeneration"] > minimum and s["runWasRefresh"] and s["refreshGeneratedAtAdvanced"] and s["entryCount"] > 0))' MINIMUM=$before_generation)
-printf 'REFRESH %s\n' "$refreshed"
-
+fresh=$(wait_for "cache provenance refresh" 'import json,os,sys;s=json.loads(os.environ["STATE"]);sys.exit(not(s["idle"] and s["hasModel"] and s["fresh"] and not s["failureCode"]))')
+printf 'REFRESHED %s\n' "$fresh"
 retention=$(ipc captureRetentionBaseline)
-retained_count=$(STATE=$retention python3 -c 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0 and s["retainedModelMatches"]; print(s["entryCount"])')
 ipc setExecutable "$temporary/missing-swbctl" >/dev/null
-degraded=$(wait_for "configured executable failure" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); sys.exit(not (s["idle"] and s["failureCode"] == "executable_not_found" and expected > 0 and s["entryCount"] == expected and s["retentionBaselineCount"] == expected and s["retainedModelMatches"]))' EXPECTED=$retained_count)
-printf 'RETAINED_FAILURE %s\n' "$degraded"
-
-failed_generation=$(STATE=$degraded python3 -c 'import json, os; print(json.loads(os.environ["STATE"])["runGeneration"])')
-ipc setExecutable "$swbctl" >/dev/null
-recovered=$(wait_for "configured executable recovery" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"] and s["entryCount"] == expected and s["runGeneration"] > minimum))' EXPECTED=$retained_count MINIMUM=$failed_generation)
-printf 'RECOVERED %s\n' "$recovered"
-
-retention=$(ipc captureRetentionBaseline)
-retained_count=$(STATE=$retention python3 -c 'import json, os; s=json.loads(os.environ["STATE"]); assert s["entryCount"] > 0 and s["retainedModelMatches"]; print(s["entryCount"])')
-mv -- "$temporary/switchboard-bridge" "$temporary/switchboard-bridge.disabled"
-ipc refresh >/dev/null
-start_failed=$(wait_for "QML process start failure" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); sys.exit(not (s["idle"] and s["failureCode"] == "bridge_start_failed" and expected > 0 and s["entryCount"] == expected and s["retentionBaselineCount"] == expected and s["retainedModelMatches"]))' EXPECTED=$retained_count)
-printf 'START_FAILURE %s\n' "$start_failed"
-
-failed_generation=$(STATE=$start_failed python3 -c 'import json, os; print(json.loads(os.environ["STATE"])["runGeneration"])')
-mv -- "$temporary/switchboard-bridge.disabled" "$temporary/switchboard-bridge"
-ipc refresh >/dev/null
-start_recovered=$(wait_for "QML process start recovery" 'import json, os, sys; s=json.loads(os.environ["STATE"]); expected=int(os.environ["EXPECTED"]); minimum=int(os.environ["MINIMUM"]); sys.exit(not (s["idle"] and s["failureCode"] == "" and s["hasModel"] and s["entryCount"] == expected and s["runGeneration"] > minimum))' EXPECTED=$retained_count MINIMUM=$failed_generation)
-printf 'START_RECOVERED %s\n' "$start_recovered"
-
-if rg -q -i 'component error.*switchboard|switchboard.*component error|failed to (load|instantiate).*switchboard|switchboard.*failed to (load|instantiate)' "$log_file"; then
-    die "Quickshell log contains a Switchboard load error"
-fi
-printf 'LIVE_INTEGRATION_OK\n'
+retained=$(wait_for "last-good retention" 'import json,os,sys;s=json.loads(os.environ["STATE"]);sys.exit(not(s["idle"] and not s["fresh"] and s["failureCode"] and s["retainedModelMatches"]))')
+printf 'RETAINED_FAILURE %s\n' "$retained"
+printf 'LIVE_INTEGRATION_V1_OK\n'

@@ -5,9 +5,19 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
 python3 -m json.tool plugin.json >/dev/null
-sh -n scripts/check scripts/dev-plugin scripts/live-cleanup.sh scripts/live-integration scripts/live-shell-integration
+sh -n scripts/check scripts/dev-plugin scripts/live-integration
+python3 -m compileall -q switchboard_dms scripts tests
+ruff format --check switchboard_dms scripts tests
+ruff check switchboard_dms scripts tests
 python3 -m unittest discover -s tests -v
-node tests/test_model.js
+node tests/test_entry_model.js
+
+first=$(mktemp)
+second=$(mktemp)
+trap 'rm -f -- "$first" "$second"' EXIT HUP INT TERM
+SOURCE_DATE_EPOCH=1784073600 scripts/build-plugin --output "$first"
+SOURCE_DATE_EPOCH=1784073600 scripts/build-plugin --output "$second"
+cmp "$first" "$second"
 
 qt6_qmlformat=${QT6_QMLFORMAT:-/usr/lib/qt6/bin/qmlformat}
 if [ -x "$qt6_qmlformat" ]; then

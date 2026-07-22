@@ -5,43 +5,35 @@ import Quickshell.Io
 ShellRoot {
     id: root
 
-    property string capturedIdentity: ""
-    property string capturedItemKey: ""
-    property int retentionEntryCount: 0
-    property string retentionFingerprint: ""
-    property double refreshBaselineGeneratedAt: -1
     property bool queryMatchedExact: false
+    property bool categoriesValid: false
     property bool cacheReloaded: false
-    property bool projectsCategoryAvailable: false
-    property bool projectActionsAvailable: false
-    property bool localProjectRowsMatch: false
+    property int retainedCount: 0
+    property string retainedFingerprint: ""
 
-    function modelFingerprint() {
+    function fingerprint() {
         return launcher.lastGoodModel ? JSON.stringify(launcher.lastGoodModel) : "";
     }
 
     function summary() {
         const model = launcher.lastGoodModel;
-        const tasks = model && Array.isArray(model.tasks) ? model.tasks : [];
-        const inbox = model && Array.isArray(model.inboxSessions) ? model.inboxSessions : [];
         return JSON.stringify({
-            "idle": !launcher.runActive && !launcher.startScheduled,
+            "idle": !launcher.runActive && !launcher.actionActive,
             "runGeneration": launcher.runGeneration,
-            "runWasRefresh": launcher.runWasRefresh,
             "hasModel": model !== null,
-            "entryCount": tasks.length + inbox.length,
+            "fresh": launcher.modelFresh,
+            "viewCount": model ? model.views.length : 0,
+            "projectCount": model ? model.projects.length : 0,
+            "recoveryCount": model ? model.recoveries.length : 0,
+            "entryCount": model ? model.views.length + model.projects.length + model.recoveries.length : 0,
             "failureCode": launcher.currentFailure ? launcher.currentFailure.code : "",
-            "cacheReloaded": root.cacheReloaded,
-            "projectsCategoryAvailable": root.projectsCategoryAvailable,
-            "projectActionsAvailable": root.projectActionsAvailable,
-            "localProjectRowsMatch": root.localProjectRowsMatch,
-            "validatorRejectedInvalid": launcher.parseCurrentBridgeResponse("{\"bridgeVersion\":1}").error.code === "bridge_incompatible" && !launcher.validateFrontendModel({}),
             "queryMatchedExact": root.queryMatchedExact,
-            "refreshGeneratedAtAdvanced": model !== null && root.refreshBaselineGeneratedAt >= 0 && model.generatedAt > root.refreshBaselineGeneratedAt,
-            "retentionBaselineCount": root.retentionEntryCount,
-            "retainedModelMatches": root.retentionFingerprint !== "" && root.modelFingerprint() === root.retentionFingerprint,
+            "categoriesValid": root.categoriesValid,
+            "cacheReloaded": root.cacheReloaded,
+            "retentionBaselineCount": root.retainedCount,
+            "retainedModelMatches": root.retainedFingerprint !== "" && root.fingerprint() === root.retainedFingerprint,
+            "validatorRejectedInvalid": !launcher.parseBridge("{\"bridgeVersion\":4}").ok,
             "settingsHeightPositive": settingsRoot.implicitHeight > 0,
-            "settingsFocused": settingsRoot.focus || settingsRoot.activeFocus,
             "swbctlConfigured": launcher.swbctlExecutable.length > 0
         });
     }
@@ -65,23 +57,18 @@ ShellRoot {
         function loadPluginData(pluginId, key, defaultValue) {
             if (pluginId !== "switchboard")
                 return defaultValue;
-
             if (key === "swbctl")
                 return swbctl;
-
             if (key === "timeout_ms")
                 return timeoutMs;
-
             if (key === "refresh_seconds")
                 return refreshSeconds;
-
             return defaultValue;
         }
 
         function savePluginData(pluginId, key, value) {
             if (pluginId !== "switchboard")
                 return false;
-
             if (key === "swbctl")
                 swbctl = String(value);
             else if (key === "timeout_ms")
@@ -99,9 +86,8 @@ ShellRoot {
         }
 
         function savePluginState(pluginId, key, value) {
-            if (pluginId !== "switchboard")
-                return;
-            pluginState[key] = value;
+            if (pluginId === "switchboard")
+                pluginState[key] = value;
         }
 
         function getPluginVariants(pluginId) {
@@ -111,13 +97,10 @@ ShellRoot {
 
     SwitchboardLauncher {
         id: launcher
-
         pluginService: testPluginService
     }
 
     FloatingWindow {
-        id: settingsWindow
-
         visible: true
         implicitWidth: 520
         implicitHeight: Math.max(240, settingsRoot.implicitHeight)
@@ -125,83 +108,57 @@ ShellRoot {
 
         SwitchboardSettings {
             id: settingsRoot
-
             anchors.fill: parent
             pluginService: testPluginService
         }
     }
 
     IpcHandler {
+        target: "switchboard-live"
+
         function status(): string {
             return root.summary();
         }
 
         function captureBaseline(): string {
             const model = launcher.lastGoodModel;
-            const tasks = model && Array.isArray(model.tasks) ? model.tasks : [];
-            const inbox = model && Array.isArray(model.inboxSessions) ? model.inboxSessions : [];
             root.queryMatchedExact = false;
-            if (tasks.length === 0 && inbox.length === 0)
+            if (!model)
                 return root.summary();
-
-            const useTask = tasks.length > 0;
-            root.capturedIdentity = useTask ? tasks[0].title : inbox[0].providerSessionId;
-            root.capturedItemKey = useTask ? tasks[0].taskId : inbox[0].sessionKey;
-            root.refreshBaselineGeneratedAt = model.generatedAt;
-            launcher.setCategory(useTask ? "" : "inbox");
-            const items = launcher.getItems(root.capturedIdentity);
-            let matches = 0;
-            for (let index = 0; index < items.length; index++) {
-                if ((useTask && items[index]._switchboardKind === "task" && items[index]._taskId === root.capturedItemKey) || (!useTask && items[index]._switchboardKind === "session" && items[index]._sessionKey === root.capturedItemKey))
-                    matches += 1;
+            if (model.views.length > 0) {
+                launcher.setCategory("");
+                const view = model.views[0];
+                const items = launcher.getItems(view.title);
+                root.queryMatchedExact = items.filter(item => item._switchboardKind === "view" && item._targetId === view.viewId).length === 1;
+            } else if (model.projects.length > 0) {
+                launcher.setCategory("projects");
+                const project = model.projects[0];
+                const items = launcher.getItems(project.name);
+                root.queryMatchedExact = items.filter(item => item._switchboardKind === "project" && item._targetId === project.projectId).length === 1;
             }
-            root.queryMatchedExact = matches === 1;
             return root.summary();
         }
 
-        function captureProjectSurface(): string {
+        function captureCategories(): string {
             const model = launcher.lastGoodModel;
-            const projects = model && Array.isArray(model.projects) ? model.projects : [];
             const categories = launcher.getCategories();
-            let localProjects = 0;
-            for (let projectIndex = 0; projectIndex < projects.length; projectIndex++) {
-                if (projects[projectIndex].routes.some(route => route.isLocal))
-                    localProjects += 1;
-            }
-            root.projectsCategoryAvailable = categories.some(category => category.id === "projects");
-            launcher.setCategory("projects");
-            const items = launcher.getItems("");
-            let addActions = 0;
-            let manageAllActions = 0;
-            let projectRows = 0;
-            for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
-                if (items[itemIndex]._switchboardKind === "project-add")
-                    addActions += 1;
-                else if (items[itemIndex]._switchboardKind === "project-manager" && items[itemIndex]._projectId)
-                    projectRows += 1;
-                else if (items[itemIndex]._switchboardKind === "project-manager")
-                    manageAllActions += 1;
-            }
-            launcher.setCategory("");
-            root.projectActionsAvailable = addActions === 1 && manageAllActions === 1;
-            root.localProjectRowsMatch = projectRows === localProjects;
+            root.categoriesValid = categories.length >= 2 && categories[0].name === "Views" && categories[1].name === "Projects" && (!model || model.recoveries.length === 0 || categories.some(category => category.name === "Recovery"));
             return root.summary();
         }
 
         function reloadCachedModel(): string {
-            const fingerprint = root.modelFingerprint();
+            const before = root.fingerprint();
             launcher.lastGoodModel = null;
-            launcher.loadCachedModel();
-            root.cacheReloaded = fingerprint !== "" && root.modelFingerprint() === fingerprint;
+            launcher.modelFresh = false;
+            launcher.loadCache();
+            root.cacheReloaded = before !== "" && root.fingerprint() === before && !launcher.modelFresh;
             return root.summary();
         }
 
         function captureRetentionBaseline(): string {
             const model = launcher.lastGoodModel;
-            const tasks = model && Array.isArray(model.tasks) ? model.tasks : [];
-            const inbox = model && Array.isArray(model.inboxSessions) ? model.inboxSessions : [];
-            root.retentionEntryCount = tasks.length + inbox.length;
-            root.retentionFingerprint = root.modelFingerprint();
+            root.retainedCount = model ? model.views.length + model.projects.length + model.recoveries.length : 0;
+            root.retainedFingerprint = root.fingerprint();
             return root.summary();
         }
 
@@ -215,12 +172,5 @@ ShellRoot {
             testPluginService.pluginDataChanged("switchboard");
             return status();
         }
-
-        function focusSettings(): string {
-            settingsRoot.forceActiveFocus();
-            return status();
-        }
-
-        target: "switchboard-live"
     }
 }

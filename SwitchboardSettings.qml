@@ -1,5 +1,5 @@
 import QtQuick
-import "SwitchboardModelV5Badges.js" as SwitchboardModelV5
+import "SwitchboardEntryModelV1.js" as EntryModel
 import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets
@@ -48,7 +48,7 @@ PluginSettings {
                 return;
 
             const loadedValue = String(settings.loadValue("terminal", "ghostty") || "ghostty");
-            const boundedValue = SwitchboardModelV5.boundedExecutable(loadedValue, "ghostty");
+            const boundedValue = EntryModel.boundedExecutable(loadedValue, "ghostty");
             if (terminalField.activeFocus && isInitialized)
                 return;
 
@@ -63,7 +63,7 @@ PluginSettings {
             if (!isInitialized)
                 return;
 
-            const boundedValue = SwitchboardModelV5.boundedExecutable(terminalField.text, "ghostty");
+            const boundedValue = EntryModel.boundedExecutable(terminalField.text, "ghostty");
             if (terminalField.text !== boundedValue)
                 terminalField.text = boundedValue;
 
@@ -100,7 +100,7 @@ PluginSettings {
 
             width: parent.width
             placeholderText: "ghostty"
-            maximumLength: SwitchboardModelV5.MAX_EXECUTABLE_LENGTH
+            maximumLength: EntryModel.MAX_EXECUTABLE_LENGTH
             onEditingFinished: terminalSetting.commit()
             onActiveFocusChanged: {
                 if (!activeFocus)
@@ -132,7 +132,7 @@ PluginSettings {
                 return;
 
             const loadedValue = String(settings.loadValue("swbctl", "swbctl") || "swbctl");
-            const boundedValue = SwitchboardModelV5.boundedExecutable(loadedValue);
+            const boundedValue = EntryModel.boundedExecutable(loadedValue);
             if (executableField.activeFocus && isInitialized)
                 return;
 
@@ -147,7 +147,7 @@ PluginSettings {
             if (!isInitialized)
                 return;
 
-            const boundedValue = SwitchboardModelV5.boundedExecutable(executableField.text);
+            const boundedValue = EntryModel.boundedExecutable(executableField.text);
             if (executableField.text !== boundedValue)
                 executableField.text = boundedValue;
 
@@ -184,7 +184,7 @@ PluginSettings {
 
             width: parent.width
             placeholderText: "swbctl"
-            maximumLength: SwitchboardModelV5.MAX_EXECUTABLE_LENGTH
+            maximumLength: EntryModel.MAX_EXECUTABLE_LENGTH
             onEditingFinished: executableSetting.commit()
             onActiveFocusChanged: {
                 if (!activeFocus)
@@ -195,8 +195,8 @@ PluginSettings {
 
     SliderSetting {
         settingKey: "timeout_ms"
-        label: "Fleet timeout"
-        description: "Maximum time allowed for swbctl to produce one validated fleet."
+        label: "Navigator timeout"
+        description: "Maximum time allowed for swbctl to produce one validated NavigatorState."
         defaultValue: 10000
         minimum: 100
         maximum: 60000

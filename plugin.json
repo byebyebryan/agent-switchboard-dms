@@ -2,8 +2,8 @@
   "$schema": "https://danklinux.com/schemas/plugin.json",
   "id": "switchboard",
   "name": "Switchboard",
-  "description": "Agent Switchboard launcher integration for DMS.",
-  "version": "0.4.1",
+  "description": "Durable Agent Switchboard view entry for DMS.",
+  "version": "0.5.0",
   "author": "Bryan Bai",
   "type": "launcher",
   "capabilities": [
