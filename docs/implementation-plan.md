@@ -319,11 +319,11 @@ Automated acceptance covers two-host project merging, duplicate TaskIds on
 different hosts, remote/offline/stale presentation, per-host creation rows,
 never-seen remotes, malformed Fleet rejection, host-qualified exact argv,
 plan-host mismatch, process cleanup, cache validation, and the private-state
-Quickshell harness. Guarded installed acceptance must not restart or signal
-active Codex, Claude, or tmux sessions. A true remote open/create/continuation
-exercise additionally requires an explicitly configured reachable test host;
-local-only acceptance must be recorded as such rather than presented as SSH
-parity.
+Quickshell harness. Guarded installed acceptance on 2026-07-21 then used the
+configured `snap.lan` host to pass remote continuation, one-window focus
+deduplication, close, and exact-session reopen. No prompt was submitted and no
+pre-existing Codex, Claude, or tmux process changed. The exact evidence is in
+[`live-integration.md`](live-integration.md).
 
 ## Phase 6: local project catalog handoff (implementation complete)
 

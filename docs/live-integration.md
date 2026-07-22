@@ -398,11 +398,43 @@ hook benchmark classified both providers unhealthy because warm p95 was about
 130 ms against the 125 ms performance budget. That performance-only result did
 not block Fleet or DMS validation.
 
-No remote endpoint is configured on this host, so this is local Fleet and
-installed-DMS acceptance, not live SSH parity. A guarded remote
-fetch/open/create/continuation exercise remains pending an explicitly
-configured test host. No provider was launched, stopped, restarted, or
-signalled during this acceptance.
+This was the initial local-only checkpoint. It was superseded by the guarded
+two-host closeout below. No provider was launched, stopped, restarted, or
+signalled during this earlier checkpoint.
+
+## Phase 5 two-host SSH parity acceptance
+
+The 2026-07-21 closeout used DMS 1.5.2, bridge 4/model 5, local host
+`starship`, and configured remote `snap.lan`. The same ProjectId and
+RepositoryId were present on both hosts with distinct checkout IDs. Federation
+was declared and HostId-pinned in both directions so the destination could
+validate the source of an imported continuation. Full refresh, retained read,
+controlled offline last-good retention, and online recovery passed without a
+surviving SSH child.
+
+A test-owned local Codex task exported exact handoffs to two remote tasks.
+Codex 0.144.6 does not emit or persist `SessionStart` at an empty prompt, so
+the no-credit Codex smoke was recorded as a limited ingestor/transport check
+rather than provider-hook or resumability evidence. The complete provider
+lifecycle used Claude 2.1.216 on `snap.lan`: its trusted startup hook bound a
+zero-turn session before any prompt, and the bridge projected that task as one
+online remote model-v5 row with the exact imported handoff lineage.
+
+`switchboard-open` launched one Ghostty window for that remote task. Repeating
+the action returned `focused` for the same surface and niri window ID. Close
+returned `runtimeDisposition=stopped`, removed the exact tmux surface and
+window, and left the retained session resumable. Reopen then resumed the exact
+same provider UUID in one replacement surface; the final close again removed
+only that test-owned runtime. Retained event counts were two
+`SessionStart`, two `SessionEnd`, and zero `UserPromptSubmit`.
+
+The first remote reopen exposed a core SSH token-allowlist omission for the
+core-authored `--reopen` flag. Core commit `bd287ef` added the missing flag
+and regression coverage; after the fixed build was installed on `snap.lan`,
+the same DMS action passed. The Switchboard plugin activated and reloaded
+in-place without a DMS restart. All pre-existing tmux pane/PID and
+Codex/Claude PID records were identical before and after, and the external
+legacy `agentSessions` plugin was neither used nor modified.
 
 ## Phase 6 local project-catalog acceptance
 

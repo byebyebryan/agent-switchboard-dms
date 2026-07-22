@@ -17,6 +17,13 @@ The desktop helper generates stable task and request UUIDs and calls atomic
 new-task preparation, so a focus fallback cannot create a second task or
 provider runtime.
 
+Guarded two-host acceptance passed on 2026-07-21. The installed bridge
+projected local and `snap.lan` routes, launched and refocused one remote
+Ghostty surface, closed it, and reopened the exact same zero-turn Claude
+session without duplicating the task, session, surface, or window. Core owned
+every SSH operation; the external legacy `agentSessions` plugin was not used
+or modified.
+
 The separate Projects category remains available even before a fleet model has
 loaded. It shows only projects with a local route, plus Add Project and Manage
 Projects actions. Those rows open core's complete project catalog manager in a
