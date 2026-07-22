@@ -51,6 +51,11 @@ The bridge reads exactly:
 `NavigatorState v1` contains core-derived host-qualified views, project entry
 routes, structural recovery, reachability/staleness, bounded warnings, and
 truncation. DMS does not join records or interpret provider/task/session state.
+Its top-level `generationId` is the local generation and becomes the entry
+model's `sourceGenerationId`. Each host row retains its owner generation and an
+explicit stale bit. Core supplies the view title, breadcrumb, activity,
+attention, transition/control state, and last activity; DMS does not recreate
+those semantics.
 
 Each activation calls one core route with a new UUID:
 
@@ -215,11 +220,11 @@ framing, and one canonical output record.
 
 ## Desktop Identity and Single Flight
 
-The DMS-managed desktop application identity hashes `(HostId, ViewId)` and is
-stable while frames/provider panes change. Provider/session identities never
-participate.
-
-Exactly one canonical DMS-managed window may exist per view. Ordinary external
+The DMS-managed desktop application identity hashes the directive's opaque
+`desktopToken` with its owner HostId. It is stable while frames/provider panes
+change; provider/session identities never participate, and cached
+NavigatorState supplies no identity capability. Exactly one
+canonical DMS-managed window may exist per view. Ordinary external
 tmux clients are supported but do not receive or share this DMS application
 identity. Focus considers exact matching DMS windows only. Zero matches permits
 the leased fallback; one focuses; more than one returns
@@ -281,6 +286,13 @@ Before the core cutover commit, the coordinated rollback restores the old core
 pointer/packages, old DMS package/cache/settings, and hook configuration. After
 commit there is no automatic downgrade; recovery is forward-only or an explicit
 operator-led offline restore.
+
+The paired one-shot executor stages both hosts before either commit and records
+exact commits, artifact hashes, observed provider versions, generation IDs,
+cold-start identity, read hashes, and named checks as `CutoverEvidence v1`.
+Snap, in role `remote_owner`, commits first; local, in role `desktop_primary`,
+commits second while DMS and hooks remain disabled. DMS is enabled only after
+both commits and hook installation succeed.
 
 ## Clean-Break Deletion
 
