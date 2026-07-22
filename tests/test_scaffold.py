@@ -352,14 +352,18 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_view_entry_clean_break_is_documented(self):
         for phrase in (
-            "Status: accepted replacement design; implementation pending",
+            "Status: Phase 6A.1 contract repair complete; implementation pending",
             "NavigatorState v1",
-            "ViewAction v1",
+            "PresentationDirective v1",
             "Views",
             "Projects",
             "Recovery",
             "There is no compatibility mode",
             "last_good_switchboard_entry_model_v1",
+            "Views focus as-is",
+            "Projects navigate",
+            "cutover_staged",
+            "cold DMS restart",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.normalized_view_entry_plan)

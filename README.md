@@ -4,6 +4,8 @@
 > Accepted replacement: adapter `0.5.0` becomes a Views/Projects/Recovery entry
 > picker during the coordinated Agent Switchboard Phase 6 clean break. There is
 > no compatibility mode. See [the view-entry plan](docs/view-entry-plan.md).
+> In that replacement, Views focus as-is, Projects explicitly navigate through
+> core, and activation requires a paired staged cutover plus a cold DMS restart.
 
 Switchboard is the task-first DankMaterialShell launcher for local and
 configured remote Agent Switchboard work. Its default view lists open tasks,
